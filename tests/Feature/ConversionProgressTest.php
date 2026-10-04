@@ -74,8 +74,8 @@ class ConversionProgressTest extends TestCase
         $this->post('/start/account', [
             'name' => 'Office Manager',
             'email' => 'office@example.com',
-            'password' => 'Office-check-1',
-            'password_confirmation' => 'Office-check-1',
+            'password' => 'Test-login-1',
+            'password_confirmation' => 'Test-login-1',
         ])->assertRedirect(route('dashboard'));
 
         $this->assertAuthenticated();

@@ -30,7 +30,8 @@ class SalespersonLinkTest extends TestCase
         $this->mock(GpConnection::class, function ($mock) {
             $mock->shouldReceive('connect')->andReturn(null);
             $mock->shouldReceive('rows')->andReturn([
-                ['id' => '205', 'first_name' => 'ALT', 'last_name' => 'TRACIE', 'inactive' => 0, 'orders' => 7],
+                ['id' => '205', 'first_name' => 'ALT', 'last_name' => 'TRACIE', 'email' => 'corinne@example.com', 'inactive' => 0, 'orders' => 7],
+                ['id' => '206', 'first_name' => 'HOUSE', 'last_name' => 'ACCOUNT', 'email' => '', 'inactive' => 0, 'orders' => 1],
             ]);
         });
         $this->mock(OdooClient::class, function ($mock) {
@@ -57,7 +58,11 @@ class SalespersonLinkTest extends TestCase
             ->get(route('salespeople.download'));
         $download->assertOk();
         $download->assertHeader('content-type', 'text/csv; charset=UTF-8');
-        $this->assertStringContainsString('salesperson_205,ALT TRACIE,gp.205,"Geckobrands, LLC",inbox,sales_team.group_sale_salesman', $download->streamedContent());
+        $csv = $download->streamedContent();
+        $this->assertStringContainsString('salesperson_205,"ALT TRACIE",alt.tracie.205@example.com,"Geckobrands, LLC",inbox,sales_team.group_sale_salesman,1', $csv);
+        $this->assertStringNotContainsString('corinne@example.com', $csv);
+        $this->assertStringContainsString('salesperson_206,"HOUSE ACCOUNT",house.account.206@example.com,"Geckobrands, LLC",inbox,sales_team.group_sale_salesman,1', $csv);
+        $this->assertStringNotContainsString('gp.205', $csv);
 
         $this->actingAs($user)
             ->post(route('salespeople.update'), ['links' => ['205' => 5]])

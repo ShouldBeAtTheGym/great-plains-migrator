@@ -52,6 +52,18 @@ class SyncController extends Controller
 
         $filename = $export['download_name'];
 
+        try {
+            $lookup = $gp->connect($company);
+            try {
+                $export = $catalog->attachPartnerResIds($company, $lookup, $export);
+                $export = $catalog->assignCrmEventUsers($company, $lookup, $export);
+            } finally {
+                sqlsrv_close($lookup);
+            }
+        } catch (RuntimeException $exception) {
+            return redirect()->route('sync.show')->with('error', $exception->getMessage());
+        }
+
         return response()->streamDownload(function () use ($catalog, $gp, $sync, $company, $export) {
             @set_time_limit(0);
             $connection = $gp->connect($company);

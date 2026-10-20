@@ -39,9 +39,14 @@ Route::middleware(['intro.open', 'setup.introduced'])->group(function () {
 
 Route::middleware(['office.login', 'setup.ready'])->group(function () {
     Route::get('/dashboard', DashboardController::class)->name('dashboard');
+    Route::get('/copies', [DashboardController::class, 'copies'])->name('copies');
+    Route::post('/copies', [DashboardController::class, 'startCopies'])->name('copies.start');
     Route::get('/setup/great-plains', [GreatPlainsTabController::class, 'show'])->name('setup.great-plains');
     Route::post('/setup/great-plains', [GreatPlainsTabController::class, 'store'])->name('setup.great-plains.store');
     Route::get('/steps/{key}', [StepController::class, 'show'])->name('steps.show');
+    Route::get('/steps/{key}/copy', [StepController::class, 'copyStatus'])->name('steps.copy');
+    Route::post('/steps/{key}/copy', [StepController::class, 'copyStart'])->name('steps.copy.start');
+    Route::get('/steps/customer_price_lists/missing', [StepController::class, 'downloadMissingPriceLists'])->name('steps.price-lists.missing');
     Route::get('/steps/{key}/download/{part?}', [StepController::class, 'download'])->where('part', '[0-9]+')->name('steps.download');
     Route::get('/steps/{key}/problems', [StepController::class, 'problems'])->name('steps.problems');
     Route::post('/steps/{key}/company', [StepController::class, 'importCompany'])->name('steps.import-company');

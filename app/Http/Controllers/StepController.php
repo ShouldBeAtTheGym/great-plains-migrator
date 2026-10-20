@@ -7,6 +7,7 @@ use App\Models\ConversionStep;
 use App\Services\ConversionPlanner;
 use App\Services\ExportCatalog;
 use App\Services\GpConnection;
+use App\Services\GpCopyService;
 use App\Services\OdooClient;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -17,12 +18,14 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class StepController extends Controller
 {
-    public function show(string $key, ExportCatalog $catalog, ConversionPlanner $planner, GpConnection $gp, OdooClient $odoo): View
+    public function show(string $key, ExportCatalog $catalog, ConversionPlanner $planner, GpConnection $gp, OdooClient $odoo, GpCopyService $copies): View
     {
         $company = Company::current();
+        $copies->kickoffCatalog($company);
         $export = $this->export($catalog, $key);
         $step = $this->step($company, $key);
         $current = ConversionStep::currentFor($company);
+        $isCurrent = $current && $current->id === $step->id;
         $guide = $planner->guide($key, $export['odoo']);
 
         $columns = [];
@@ -31,26 +34,24 @@ class StepController extends Controller
         $problemCount = null;
         $problems = [];
         $loadError = null;
+        $copy = $copies->snapshot($company, $key);
+        $savedCount = null;
         try {
             $export = $catalog->prepare($company, $export);
-            $connection = $gp->connect($company);
-            try {
-                $columns = $catalog->columns($connection, $export);
-                $countRows = $gp->rows($connection, $export['count_sql'], 1);
-                $count = isset($countRows[0]['c']) ? (int) $countRows[0]['c'] : null;
-                if ($count !== null && $count > 0 && $count < 5000) {
-                    $sample = $catalog->sample($connection, $export, 3);
+            if ($copy['status'] === 'complete') {
+                $export = $copies->applyLiveLookups($company, $export);
+                if ($copies->ready($company, $key, $export)) {
+                    $columns = $copies->headers($company, $key);
+                    $count = $copy['record_count'];
+                    $savedCount = $copy['saved_count'];
+                    $sample = $count > 0 && $count < 5000 ? $copies->sample($company, $key, 3) : [];
+                    $this->loadProblems($gp, $company, $export, $problemCount, $problems);
+                } else {
+                    $copies->forget($company, $key);
+                    $copy = $copies->snapshot($company, $key);
                 }
-                if (! empty($export['problem_count_sql'])) {
-                    $problemRows = $gp->rows($connection, $export['problem_count_sql'], 1);
-                    $problemCount = isset($problemRows[0]['c']) ? (int) $problemRows[0]['c'] : 0;
-                    if ($problemCount > 0) {
-                        $preview = 'SELECT TOP 50 * FROM ('.$export['problem_sql'].') AS problem_src ORDER BY document_date, document';
-                        $problems = $this->problemRows($gp->rows($connection, $preview, 50));
-                    }
-                }
-            } finally {
-                sqlsrv_close($connection);
+            } elseif ($copy['record_count'] > 0) {
+                $count = $copy['record_count'];
             }
         } catch (RuntimeException $exception) {
             $loadError = $exception->getMessage();
@@ -70,14 +71,16 @@ class StepController extends Controller
             'company' => $company,
             'export' => $export,
             'step' => $step,
-            'current' => $current && $current->id === $step->id,
+            'current' => $isCurrent,
             'guide' => $guide,
             'columns' => $columns,
             'sample' => $sample,
             'count' => $count,
             'problemCount' => $problemCount,
             'problems' => $problems,
-            'parts' => $catalog->partCount($count),
+            'parts' => $catalog->partCount($savedCount ?? $count),
+            'copy' => $copy,
+            'queue' => $copies->catalogQueue($company),
             'loadError' => $loadError,
             'odooCompanies' => $odooCompanies,
             'companyLoadError' => $companyLoadError,
@@ -116,7 +119,24 @@ class StepController extends Controller
             ->with('status', 'Customers will import into '.$match['name'].'. Download the file again. The company_id column is '.$match['name'].'.');
     }
 
-    public function download(string $key, ExportCatalog $catalog, GpConnection $gp, ?int $part = null): StreamedResponse|RedirectResponse
+    public function copyStatus(string $key, GpCopyService $copies): JsonResponse
+    {
+        $company = Company::current();
+        $this->currentStep($company, $key);
+
+        return response()->json($copies->snapshot($company, $key));
+    }
+
+    public function copyStart(string $key, GpCopyService $copies): JsonResponse
+    {
+        $company = Company::current();
+        $this->currentStep($company, $key);
+        $copies->kickoff($company, $key);
+
+        return response()->json($copies->snapshot($company, $key));
+    }
+
+    public function download(string $key, ExportCatalog $catalog, GpCopyService $copies, ?int $part = null): StreamedResponse|RedirectResponse
     {
         $company = Company::current();
         if ($key === 'customers' && ! $company->odoo_import_company_id) {
@@ -134,22 +154,28 @@ class StepController extends Controller
 
         try {
             $export = $catalog->prepare($company, $export);
+            $export = $copies->applyLiveLookups($company, $export);
         } catch (RuntimeException $exception) {
             return redirect()->route('steps.show', $key)->with('error', $exception->getMessage());
         }
 
-        $countRows = [];
-        try {
-            $connection = $gp->connect($company);
-            try {
-                $countRows = $gp->rows($connection, $export['count_sql'], 1);
-            } finally {
-                sqlsrv_close($connection);
+        $ready = $copies->ready($company, $key, $export);
+        if (! $ready) {
+            if ($step->isComplete()) {
+                return redirect()
+                    ->route('steps.show', $key)
+                    ->with('error', 'Recheck this step to copy it from Great Plains again.');
             }
-        } catch (RuntimeException $exception) {
-            return redirect()->route('steps.show', $key)->with('error', $exception->getMessage());
+            if ($copies->snapshot($company, $key)['status'] === 'complete') {
+                $copies->forget($company, $key);
+            }
+            $copies->kickoff($company, $key);
+
+            return redirect()
+                ->route('steps.show', $key)
+                ->with('status', 'This file is still copying from Great Plains. The progress on this page shows the record count, how many rows are processed, and the current record.');
         }
-        $count = isset($countRows[0]['c']) ? (int) $countRows[0]['c'] : 0;
+        $count = (int) $ready->saved_count;
         $parts = $catalog->partCount($count);
         if ($parts > 1 && $part === null) {
             return redirect()
@@ -159,17 +185,56 @@ class StepController extends Controller
         if ($part !== null && ($part < 1 || $part > $parts)) {
             abort(404);
         }
-        if ($part !== null) {
-            $export['sql'] = $catalog->partSql($export['sql'], $part);
-        }
 
         $filename = $catalog->filename($export, $parts > 1 ? $part : null);
 
-        return response()->streamDownload(function () use ($catalog, $gp, $company, $export) {
+        return response()->streamDownload(function () use ($copies, $company, $key, $part) {
             @set_time_limit(0);
+            $copies->stream($company, $key, $part);
+        }, $filename, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Cache-Control' => 'no-store',
+        ]);
+    }
+
+    public function downloadMissingPriceLists(ExportCatalog $catalog, GpConnection $gp): StreamedResponse|RedirectResponse
+    {
+        @set_time_limit(0);
+        $company = Company::current();
+        $export = $catalog->find('customer_price_lists');
+        if ($export === null) {
+            abort(404);
+        }
+
+        $connection = null;
+        try {
+            $export = $catalog->prepare($company, $export);
             $connection = $gp->connect($company);
+            $missing = $catalog->missingPriceListIds($company, $connection, $export);
+            if ($missing === []) {
+                sqlsrv_close($connection);
+
+                return redirect()
+                    ->route('steps.show', 'customer_price_assign')
+                    ->with('status', 'Every customer price list is already in Odoo.');
+            }
+            $export['sql'] = $catalog->onlyIds($export['sql'], $missing);
+            $export['file'] = 'odoo18_customer_price_lists_missing.csv';
+            $statement = $catalog->open($connection, $export);
+        } catch (RuntimeException $exception) {
+            if (is_resource($connection)) {
+                sqlsrv_close($connection);
+            }
+
+            return redirect()->route('steps.show', 'customer_price_assign')->with('error', $exception->getMessage());
+        }
+
+        $filename = $catalog->filename($export);
+
+        return response()->streamDownload(function () use ($catalog, $connection, $export, $statement) {
+            @set_time_limit(0);
             try {
-                $catalog->stream($connection, $export);
+                $catalog->stream($connection, $export, null, $statement);
             } finally {
                 sqlsrv_close($connection);
             }
@@ -273,7 +338,7 @@ class StepController extends Controller
             ->with('status', $export['title'].' was skipped. The next Start button is ready. Nothing was changed in Odoo.');
     }
 
-    public function restart(string $key, ExportCatalog $catalog, ConversionPlanner $planner): RedirectResponse
+    public function restart(string $key, ExportCatalog $catalog, ConversionPlanner $planner, GpCopyService $copies): RedirectResponse
     {
         @set_time_limit(180);
         $company = Company::current();
@@ -285,6 +350,7 @@ class StepController extends Controller
         }
 
         $cleanup = $planner->removeImported($company, $export);
+        $copies->forget($company, $key);
         $step->update([
             'status' => 'pending',
             'completed_at' => null,
@@ -296,6 +362,39 @@ class StepController extends Controller
         return redirect()
             ->route('steps.show', $key)
             ->with('status', 'This step is back at the start. '.$cleanup['message']);
+    }
+
+    private function currentStep(Company $company, string $key): ConversionStep
+    {
+        $step = $this->step($company, $key);
+        $current = ConversionStep::currentFor($company);
+        abort_unless($current && $current->id === $step->id, 403);
+
+        return $step;
+    }
+
+    private function loadProblems(GpConnection $gp, Company $company, array $export, ?int &$problemCount, array &$problems): void
+    {
+        if (empty($export['problem_count_sql'])) {
+            return;
+        }
+
+        try {
+            $connection = $gp->connect($company);
+            try {
+                $problemRows = $gp->rows($connection, $export['problem_count_sql'], 1);
+                $problemCount = isset($problemRows[0]['c']) ? (int) $problemRows[0]['c'] : 0;
+                if ($problemCount > 0 && ! empty($export['problem_sql'])) {
+                    $preview = 'SELECT TOP 50 * FROM ('.$export['problem_sql'].') AS problem_src ORDER BY document_date, document';
+                    $problems = $this->problemRows($gp->rows($connection, $preview, 50));
+                }
+            } finally {
+                sqlsrv_close($connection);
+            }
+        } catch (RuntimeException) {
+            $problemCount = null;
+            $problems = [];
+        }
     }
 
     private function odooCompanies(Company $company, OdooClient $odoo): array

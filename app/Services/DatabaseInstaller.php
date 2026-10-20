@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -29,6 +30,29 @@ class DatabaseInstaller
         }
 
         return $ready;
+    }
+
+    public function ensureSessions(): bool
+    {
+        try {
+            if (Schema::hasTable('sessions')) {
+                return true;
+            }
+
+            Artisan::call('migrate', ['--force' => true]);
+
+            if (! Schema::hasTable('sessions')) {
+                $this->createSessionsTable();
+            }
+        } catch (Throwable) {
+            return false;
+        }
+
+        try {
+            return Schema::hasTable('sessions');
+        } catch (Throwable) {
+            return false;
+        }
     }
 
     public function install(array $input): void
@@ -146,6 +170,22 @@ class DatabaseInstaller
         }
 
         return 'MySQL did not accept that connection. '.$message;
+    }
+
+    private function createSessionsTable(): void
+    {
+        if (Schema::hasTable('sessions')) {
+            return;
+        }
+
+        Schema::create('sessions', function (Blueprint $table) {
+            $table->string('id')->primary();
+            $table->foreignId('user_id')->nullable()->index();
+            $table->string('ip_address', 45)->nullable();
+            $table->text('user_agent')->nullable();
+            $table->longText('payload');
+            $table->integer('last_activity')->index();
+        });
     }
 
     private function flagged(): bool

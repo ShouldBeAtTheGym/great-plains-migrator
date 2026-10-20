@@ -22,25 +22,15 @@ class SalesPadInspector
         ];
         $missing = array_values(array_diff($required, $views));
 
-        $userFields = [];
+        $catalog = ['fields' => [], 'standards' => []];
         if (in_array('spvUserField', $views, true)) {
-            $userFields = $this->gp->rows($connection, <<<'SQL'
-SELECT Table_Name, Field_Name, Label
-FROM dbo.spvUserField
-WHERE Table_Name IN (
-    'spxItemMaster', 'spxCustomer', 'spxCustomerAddr', 'spxVendor', 'spxVendorAddr',
-    'spxSalesDocument', 'spxSalesLineItem', 'spxPurchaseOrder', 'spxPurchaseLineItem'
-)
-ORDER BY Table_Name, Display_Seq, Field_Name
-SQL);
-            $userFields = array_map(function (array $row) {
-                return [
-                    'table' => trim((string) $row['Table_Name']),
-                    'field' => trim((string) $row['Field_Name']),
-                    'label' => trim((string) $row['Label']),
-                ];
-            }, $userFields);
+            $catalog = app(UserFieldCatalog::class)->scan($connection);
         }
+        $userFields = array_map(fn (array $field) => [
+            'table' => $field['table'],
+            'field' => $field['field'],
+            'label' => $field['label'],
+        ], $catalog['fields']);
 
         $company = $this->company($connection, $views);
 
@@ -52,6 +42,8 @@ SQL);
             'sample_views' => array_slice($views, 0, 12),
             'sample_tables' => array_slice($tables, 0, 12),
             'user_fields' => $userFields,
+            'user_field_catalog' => $catalog,
+            'user_fields_scanned' => true,
             'company' => $company,
         ];
     }

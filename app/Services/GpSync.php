@@ -57,6 +57,8 @@ class GpSync
         $connection = $this->gp->connect($company);
 
         try {
+            $export = $this->catalog->bindItemUserFields($company, $export, $connection);
+            $export = $this->catalog->assignCrmEventUsers($company, $connection, $export);
             $counts = $this->readCounts($connection, $export, $profile, (int) $row->watermark);
             $this->applyCounts($row, $counts);
 
@@ -113,6 +115,8 @@ class GpSync
 
         $connection = $this->gp->connect($company);
         try {
+            $export = $this->catalog->bindItemUserFields($company, $export, $connection);
+            $export = $this->catalog->assignCrmEventUsers($company, $connection, $export);
             $counts = $this->readCounts($connection, $export, $profile, (int) $row->watermark);
             $this->applyCounts($row, $counts);
             if ($profile['dex'] !== null) {
@@ -325,6 +329,8 @@ class GpSync
             'product_categories' => ['model' => 'product.category', 'prefix' => 'product_categ_', 'group' => 'product_categ', 'exclude' => []],
             'customers' => ['model' => 'res.partner', 'prefix' => 'partner_', 'group' => 'partner', 'exclude' => ['partner_addr_']],
             'customer_addresses' => ['model' => 'res.partner', 'prefix' => 'partner_addr_', 'group' => 'partner_addr', 'exclude' => []],
+            'customer_crm_notes' => ['model' => 'mail.message', 'prefix' => 'crm_note_', 'group' => 'crm_note', 'exclude' => []],
+            'customer_crm_events' => ['model' => 'calendar.event', 'prefix' => 'crm_event_', 'group' => 'crm_event', 'exclude' => []],
             'vendors' => ['model' => 'res.partner', 'prefix' => 'vendor_', 'group' => 'vendor', 'exclude' => ['vendor_addr_']],
             'vendor_addresses' => ['model' => 'res.partner', 'prefix' => 'vendor_addr_', 'group' => 'vendor_addr', 'exclude' => []],
             'products' => ['model' => 'product.template', 'prefix' => 'product_', 'group' => 'product', 'exclude' => ['product_categ_', 'product_variant_']],

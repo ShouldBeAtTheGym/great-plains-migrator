@@ -46,6 +46,8 @@
                 </section>
             </div>
 
+            @include('partials.gp-copy-queue', ['queue' => $queue, 'reload' => false])
+
             @if ($countError)
                 <div class="alert alert-bad">{{ $countError }}</div>
             @endif

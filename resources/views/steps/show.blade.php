@@ -99,6 +99,7 @@
 
             <div class="card" style="margin-bottom:1rem;">
                 <h3 style="margin-top:0">How to move this file into Odoo</h3>
+                @include('partials.gp-copy-queue', ['queue' => $queue, 'focus' => $export['key'], 'reload' => true])
                 <ol class="steps">
                     <li><span>@if (!empty($export['problem_sql'])) Look at the orders left out, then download the CSV. @else Download the CSV from this page. @endif @if($count !== null) Great Plains currently has {{ number_format($count) }} rows in this file. @endif @if (($parts ?? 1) > 1) Odoo will not take the whole file. Import part 1, then part 2, and so on. Each part has {{ number_format(\App\Services\ExportCatalog::PART_ROWS) }} rows. @endif</span></li>
                     <li><span>In Odoo, open <strong>{{ $guide['screen'] }}</strong>.@if (!empty($export['hint'])) @include('partials.hover-hint', ['label' => 'Do not see?', 'hint' => $export['hint'], 'callout' => true])@endif</span></li>
@@ -113,10 +114,12 @@
                         <li><span>On the row <strong>x_gp_customer_number</strong>, choose <strong>Customer Number</strong>. Do not send the vendor id to Reference.</span></li>
                     @endif
                     @if (($export['key'] ?? '') === 'customer_price_lists')
-                        <li><span>Import customers and products first. On <strong>company_id</strong>, choose <strong>Company</strong>. On <strong>item_ids/product_id/id</strong>, choose <strong>Variant / External ID</strong>. The product import stored the template, so this file uses the variant. On <strong>item_ids/compute_price</strong>, choose <strong>Compute Price</strong>. The value <strong>fixed</strong> means Fixed Price. On <strong>item_ids/fixed_price</strong>, choose <strong>Fixed Price</strong>. Archived products are left out.</span></li>
+                        <li><span>Import customers and products first. On <strong>company_id</strong>, choose <strong>Company</strong>. On <strong>item_ids/applied_on</strong>, choose <strong>Do not import</strong>. Odoo sets Apply On to Product from the product column, and that field is not in the import list. On <strong>item_ids/product_tmpl_id/id</strong>, choose <strong>Pricelist Rules / Product / External ID</strong>. That is the product imported earlier, <strong>__import__.product_</strong> plus the item number. On <strong>item_ids/compute_price</strong>, choose <strong>Pricelist Rules / Compute Price</strong>. The value <strong>fixed</strong> means Fixed Price. On <strong>item_ids/fixed_price</strong>, choose <strong>Pricelist Rules / Fixed Price</strong>. Archived products are left out.</span></li>
                     @endif
                     @if (($export['key'] ?? '') === 'customer_price_assign')
-                        <li><span>Open <strong>Contacts</strong>. Leave the Pricelists import. If the list says <strong>Pricelist Rules</strong>, you are still on Pricelists. On Contacts, <strong>id</strong> is <strong>External ID</strong>. On <strong>property_product_pricelist/id</strong>, choose <strong>Pricelist / External ID</strong>. Do not choose Pricelist Rules or Pricelist Name.</span></li>
+                        <li><span>If Odoo says a pricelist was not found, download the price lists that are not in Odoo yet. Import that small file on <strong>Sales → Products → Pricelists</strong>, using the same column map as the full price list file. Then come back to this file.</span></li>
+                        <li><span>Open <strong>Contacts</strong>. Leave the Pricelists import. If the list says <strong>Pricelist Rules</strong>, you are still on Pricelists. On Contacts, <strong>id</strong> is <strong>External ID</strong>. On <strong>name</strong>, choose <strong>Name</strong>. On <strong>property_product_pricelist/id</strong>, choose <strong>Pricelist / External ID</strong>. Do not choose Pricelist Rules or Pricelist Name. Customer numbers that are not customers are left out of this file.</span></li>
+                        <li><span><a class="btn btn-primary" href="{{ route('steps.price-lists.missing') }}">Download price lists not in Odoo</a></span></li>
                     @endif
                     @if (str_ends_with($export['key'] ?? '', '_headers') && (str_contains($export['key'] ?? '', 'sales_orders') || str_contains($export['key'] ?? '', 'quotes')))
                         <li><span>On <strong>warehouse_id</strong>, choose <strong>Warehouse</strong>. The value is the Odoo warehouse name. The Great Plains site code, such as GRR, is not a warehouse name.</span></li>
@@ -124,8 +127,11 @@
                     @if (str_ends_with($export['key'] ?? '', '_lines') && str_starts_with($export['key'] ?? '', 'sales_'))
                         <li><span>A kit, or an item that is no longer in the product file, has a blank product column. The description and price stay on the line. Kits were left out of the product import.</span></li>
                     @endif
+                    @if (($export['key'] ?? '') === 'stock_locations')
+                        <li><span>If <strong>Locations</strong> is not in the menu, go to <strong>Inventory → Configuration → Settings</strong>. Under <strong>Warehouse</strong>, check <strong>Storage Locations</strong> and click <strong>Save</strong>. Locations then appears with Warehouses and Operations Types.</span></li>
+                    @endif
                     @if (($export['key'] ?? '') === 'inventory_on_hand')
-                        <li><span>On <strong>product_id/id</strong>, choose <strong>Variant / External ID</strong>. The value starts with <strong>__import__.product_variant_</strong>. After the import, click <strong>Apply All</strong>. That writes the counted quantity into On Hand. Until then, On Hand stays at zero.</span></li>
+                        <li><span>On <strong>product_id/id</strong>, choose <strong>Product / External ID</strong>. The value starts with <strong>__import__.product_variant_</strong>. That is the variant of the product imported earlier. Archived products are included. After the import, click <strong>Apply All</strong>. That writes the counted quantity into On Hand. Until then, On Hand stays at zero.</span></li>
                     @endif
                     @if (($export['key'] ?? '') === 'products')
                         <li><span>Great Plains kits are left out. A kit is not stock. It points at the other products that go in the box. Odoo can do that later with a Kit bill of materials in Manufacturing, after the real products are imported. Do not add the kits as normal products.</span></li>
@@ -138,21 +144,25 @@
                     <li><span>Come back here and press <strong>Confirm import</strong>. This app asks Odoo whether the records exist. When they do, the checklist moves on.</span></li>
                 </ol>
                 @if ($current)
-                    @if (($parts ?? 1) > 1)
-                        <div class="part-grid">
-                            @for ($part = 1; $part <= $parts; $part++)
-                                <a class="btn btn-primary" href="{{ route('steps.download', ['key' => $export['key'], 'part' => $part]) }}">Part {{ $part }}</a>
-                            @endfor
-                        </div>
-                    @endif
-                    <div class="step-actions">
-                        @if (($parts ?? 1) <= 1)
-                            @if (($export['key'] ?? '') === 'customers' && count($odooCompanies ?? []) > 1)
-                                <button class="btn btn-primary" id="download-csv" type="button">Download CSV</button>
-                            @else
-                                <a class="btn btn-primary" href="{{ route('steps.download', $export['key']) }}">Download CSV</a>
-                            @endif
+                    <div id="step-downloads" @if (($copy['status'] ?? '') !== 'complete') hidden @endif>
+                        @if (($parts ?? 1) > 1)
+                            <div class="part-grid">
+                                @for ($part = 1; $part <= $parts; $part++)
+                                    <a class="btn btn-primary" href="{{ route('steps.download', ['key' => $export['key'], 'part' => $part]) }}">Part {{ $part }}</a>
+                                @endfor
+                            </div>
                         @endif
+                        @if (($parts ?? 1) <= 1)
+                            <div class="step-actions" style="margin-bottom:.6rem;">
+                                @if (($export['key'] ?? '') === 'customers' && count($odooCompanies ?? []) > 1)
+                                    <button class="btn btn-primary" id="download-csv" type="button">Download CSV</button>
+                                @else
+                                    <a class="btn btn-primary" href="{{ route('steps.download', $export['key']) }}">Download CSV</a>
+                                @endif
+                            </div>
+                        @endif
+                    </div>
+                    <div class="step-actions">
                         <button class="btn start-live" id="confirm-import" type="button">Confirm import</button>
                         @if (($export['key'] ?? '') === 'customers')
                             <a class="btn btn-primary" href="{{ route('user-fields.show', 'customers') }}">Choose SalesPad customer user fields</a>

@@ -35,6 +35,7 @@ class ConversionPlanner
             $counts = [];
             foreach ($this->catalog->all() as $export) {
                 try {
+                    $export = $this->catalog->bindItemUserFields($company, $export, $connection);
                     $rows = $this->gp->rows($connection, $export['count_sql'], 1);
                     $counts[$export['key']] = isset($rows[0]['c']) ? (int) $rows[0]['c'] : null;
                 } catch (RuntimeException) {
@@ -56,6 +57,8 @@ class ConversionPlanner
             'stock_locations' => 'Inventory → Configuration → Locations',
             'customers' => 'Contacts',
             'customer_addresses' => 'Contacts',
+            'customer_crm_notes' => 'Settings → Technical → Messages',
+            'customer_crm_events' => 'Calendar → Calendar, the meetings list',
             'vendors' => 'Contacts',
             'vendor_addresses' => 'Contacts',
             'products' => 'Sales → Products → Products',
@@ -94,6 +97,8 @@ class ConversionPlanner
         try {
             $connection = $this->gp->connect($company);
             try {
+                $export = $this->catalog->bindItemUserFields($company, $export, $connection);
+                $export = $this->catalog->assignCrmEventUsers($company, $connection, $export);
                 $countRows = $this->gp->rows($connection, $export['count_sql'], 1);
                 $count = (int) ($countRows[0]['c'] ?? 0);
                 if ($count > 5000) {
@@ -201,6 +206,8 @@ class ConversionPlanner
 
         $connection = $this->gp->connect($company);
         try {
+            $export = $this->catalog->bindItemUserFields($company, $export, $connection);
+            $export = $this->catalog->assignCrmEventUsers($company, $connection, $export);
             $countRows = $this->gp->rows($connection, $export['count_sql'], 1);
             $gpCount = isset($countRows[0]['c']) ? (int) $countRows[0]['c'] : 0;
             if ($gpCount === 0) {
@@ -359,6 +366,8 @@ class ConversionPlanner
             $key === 'products' => ['product.template', 'product.product'],
             $key === 'inventory_on_hand' => ['stock.quant'],
             $key === 'customers' || $key === 'customer_addresses' || $key === 'vendors' || $key === 'vendor_addresses' || $key === 'customer_price_assign' => ['res.partner'],
+            $key === 'customer_crm_notes' => ['mail.message'],
+            $key === 'customer_crm_events' => ['calendar.event'],
             $key === 'customer_price_lists' => ['product.pricelist'],
             str_contains($key, 'sales_orders') || str_contains($key, 'quotes') => ['sale.order'],
             str_contains($key, 'purchase_orders') => ['purchase.order'],
@@ -404,6 +413,7 @@ class ConversionPlanner
     {
         $connection = $this->gp->connect($company);
         try {
+            $export = $this->catalog->bindItemUserFields($company, $export, $connection);
             $ids = $this->catalog->externalIds($connection, $export, 5);
         } finally {
             sqlsrv_close($connection);

@@ -19,6 +19,11 @@ return Application::configure(basePath: dirname(__DIR__))
             'intro.open' => \App\Http\Middleware\RedirectIfIntroClosed::class,
             'office.login' => \App\Http\Middleware\EnsureOfficeLogin::class,
         ]);
+        $middleware->prependToGroup('web', \App\Http\Middleware\EnsureSessionTables::class);
+        $middleware->prependToPriorityList(
+            \Illuminate\Session\Middleware\StartSession::class,
+            \App\Http\Middleware\EnsureSessionTables::class,
+        );
         $middleware->appendToGroup('web', \App\Http\Middleware\EnsureDatabaseReady::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

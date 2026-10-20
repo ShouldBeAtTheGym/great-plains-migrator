@@ -6,17 +6,25 @@ use App\Models\Company;
 use App\Models\ConversionStep;
 use App\Services\ConversionPlanner;
 use App\Services\ExportCatalog;
+use App\Services\GpCopyService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\View\View;
 use RuntimeException;
 
 class DashboardController extends Controller
 {
-    public function __invoke(ExportCatalog $catalog, ConversionPlanner $planner): View
+    public function __invoke(ExportCatalog $catalog, ConversionPlanner $planner, GpCopyService $copies): View
     {
         $company = Company::current();
-        if ($company->steps()->count() === 0) {
+        $savedKeys = $company->steps()->pluck('export_key')->all();
+        $catalogKeys = array_column($catalog->all(), 'key');
+        if ($savedKeys === [] || array_diff($catalogKeys, $savedKeys) !== []) {
             $planner->syncSteps($company);
         }
+
+        $current = ConversionStep::currentFor($company);
+        $copies->kickoffCatalog($company);
 
         $counts = [];
         $countError = null;
@@ -27,7 +35,6 @@ class DashboardController extends Controller
         }
 
         $steps = $company->steps()->get()->keyBy('export_key');
-        $current = ConversionStep::currentFor($company);
         $groups = [];
         foreach ($catalog->all() as $export) {
             $step = $steps->get($export['key']);
@@ -55,6 +62,23 @@ class DashboardController extends Controller
             'done' => $done,
             'total' => $total,
             'countError' => $countError,
+            'queue' => $copies->catalogQueue($company),
         ]);
+    }
+
+    public function copies(GpCopyService $copies): JsonResponse
+    {
+        return response()->json($copies->catalogQueue(Company::current()));
+    }
+
+    public function startCopies(Request $request, GpCopyService $copies): JsonResponse
+    {
+        $company = Company::current();
+        if ($request->boolean('retry')) {
+            $copies->retryFailed($company);
+        }
+        $copies->kickoffCatalog($company);
+
+        return response()->json($copies->catalogQueue($company));
     }
 }

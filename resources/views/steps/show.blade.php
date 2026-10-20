@@ -59,6 +59,44 @@
                 </div>
             @endif
 
+            @if (str_starts_with($export['key'] ?? '', 'customer_crm_') && $problemCount !== null)
+                <div class="card" style="margin-bottom:1rem;">
+                    <h3 style="margin-top:0;">Records left out of this file</h3>
+                    <p>A CRM record whose customer is not in Odoo is left out. The rest of the file can still be imported. Download the report to see the customer number on each skipped row.</p>
+                    @if ($problemCount === 0)
+                        <p>None. Every record in this file matches a customer in Odoo.</p>
+                    @elseif ($problemCount > 0)
+                        <p><strong>{{ number_format($problemCount) }}</strong> {{ $problemCount === 1 ? 'record is' : 'records are' }} left out.</p>
+                        <p><a class="btn btn-primary" href="{{ route('steps.problems', $export['key']) }}">Download problem report</a></p>
+                        @if ($problems)
+                            <div class="export-wrap">
+                                <table class="export-table">
+                                    <thead>
+                                        <tr>
+                                            @foreach (['document' => 'Record', 'document_date' => 'Date', 'customer_number' => 'Customer number', 'subject' => 'Subject', 'problem' => 'Problem'] as $column => $label)
+                                                <th>{{ $label }}</th>
+                                            @endforeach
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach ($problems as $line)
+                                            <tr>
+                                                @foreach (['document', 'document_date', 'customer_number', 'subject', 'problem'] as $column)
+                                                    <td>{{ $line[$column] ?? '' }}</td>
+                                                @endforeach
+                                            </tr>
+                                        @endforeach
+                                    </tbody>
+                                </table>
+                            </div>
+                            @if ($problemCount > count($problems))
+                                <p>The table shows the first {{ count($problems) }}. The report has all {{ number_format($problemCount) }}.</p>
+                            @endif
+                        @endif
+                    @endif
+                </div>
+            @endif
+
             @if (!empty($export['problem_sql']))
                 <div class="card" style="margin-bottom:1rem;">
                     <h3 style="margin-top:0;">Orders left out of this file</h3>

@@ -53,6 +53,33 @@ class GpCopyServiceTest extends TestCase
         ));
     }
 
+    public function test_a_crm_note_without_a_customer_in_odoo_is_reported_and_skipped(): void
+    {
+        $copies = app(GpCopyService::class);
+        $export = ['res_id_map' => ['partner_2' => 9]];
+
+        $this->assertNull($copies->problemFor([
+            'id' => 'crm_note_2',
+            'res_id' => 'partner_2',
+            'subject' => 'Call',
+            'date' => '2026-01-02',
+        ], $export));
+        $this->assertSame(
+            ['crm_note_9', '2026-01-09', '000009', 'Visit', 'Customer is not in Odoo.'],
+            $copies->problemFor([
+                'id' => 'crm_note_9',
+                'res_id' => 'partner_000009',
+                'subject' => 'Visit',
+                'date' => '2026-01-09',
+            ], $export)
+        );
+        $this->assertNull($copies->lineFrom(
+            ['res_id' => 'partner_000009'],
+            ['res_id'],
+            $export
+        ));
+    }
+
     public function test_progress_reports_the_share_processed(): void
     {
         $company = Company::query()->create(['name' => 'Blue']);

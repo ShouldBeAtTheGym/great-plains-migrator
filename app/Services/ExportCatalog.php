@@ -434,10 +434,6 @@ class ExportCatalog
             }
         }
 
-        if ($names !== [] && $map === []) {
-            throw new RuntimeException('Import the customers first. Odoo has none of the contacts these notes belong to.');
-        }
-
         $export['res_id_map'] = $map;
 
         return $export;

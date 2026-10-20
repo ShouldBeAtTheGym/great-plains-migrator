@@ -33,16 +33,14 @@ class GpCopyService
     {
         $extra = is_array($export['extra'] ?? null) ? $export['extra'] : [];
         $categories = is_array($export['category_id_map'] ?? null) ? $export['category_id_map'] : [];
-        $partners = is_array($export['res_id_map'] ?? null) ? $export['res_id_map'] : [];
         ksort($extra);
         ksort($categories);
-        ksort($partners);
 
         return hash('sha256', json_encode([
             'sql' => (string) ($export['sql'] ?? ''),
             'extra' => $extra,
             'categories' => $categories,
-            'partners' => $partners,
+            'partners' => [],
         ]));
     }
 
@@ -70,9 +68,7 @@ class GpCopyService
 
         $connection = $this->gp->connect($company);
         try {
-            $export = $this->catalog->assignCrmEventUsers($company, $connection, $export);
-
-            return $this->catalog->attachPartnerResIds($company, $connection, $export);
+            return $this->catalog->assignCrmEventUsers($company, $connection, $export);
         } finally {
             if (is_resource($connection)) {
                 sqlsrv_close($connection);
@@ -393,6 +389,7 @@ class GpCopyService
                 return;
             }
             $this->clearRows($company->id, $key);
+            $this->clearRows($company->id, $this->problemKey($key));
             if (! $this->owns($copy, $token)) {
                 return;
             }
@@ -430,9 +427,31 @@ class GpCopyService
             $processed = 0;
             $saved = 0;
             $batch = [];
+            $problems = [];
+            $problemNo = 0;
             $label = $total === 0 ? 'No rows' : 'Reading rows';
             while ($row = sqlsrv_fetch_array($statement, SQLSRV_FETCH_ASSOC)) {
                 $processed++;
+                $problem = $this->problemFor($row, $export);
+                if ($problem !== null) {
+                    $problemNo++;
+                    $label = $problem[0] !== '' ? $problem[0] : $label;
+                    $problems[] = [
+                        'company_id' => $company->id,
+                        'export_key' => $this->problemKey($key),
+                        'row_no' => $problemNo,
+                        'record_key' => mb_substr($problem[0], 0, 180),
+                        'payload' => json_encode($problem, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE),
+                    ];
+                    if (count($problems) >= self::BATCH && ! $this->flushProblems($copy, $token, $problems, $processed, $saved, $label)) {
+                        return;
+                    }
+                    if (count($problems) >= self::BATCH) {
+                        $problems = [];
+                    }
+
+                    continue;
+                }
                 $line = $this->lineFrom($row, $headers, $export);
                 if ($line !== null) {
                     $saved++;
@@ -451,6 +470,9 @@ class GpCopyService
                 if (count($batch) >= self::BATCH) {
                     $batch = [];
                 }
+            }
+            if ($problems !== [] && ! $this->flushProblems($copy, $token, $problems, $processed, $saved, $label)) {
+                return;
             }
             if ($batch !== [] && ! $this->flushBatch($copy, $token, $batch, $processed, $saved, $label)) {
                 return;
@@ -563,6 +585,87 @@ class GpCopyService
         fclose($out);
     }
 
+    /**
+     * A CRM row that cannot point at a customer in Odoo.
+     *
+     * @return list<string>|null
+     */
+    public function problemFor(array $row, array $export): ?array
+    {
+        if (! is_array($export['res_id_map'] ?? null)) {
+            return null;
+        }
+
+        $externalId = preg_replace('/[^A-Za-z0-9._-]/', '_', trim((string) ($row['res_id'] ?? ''))) ?? '';
+        if ($externalId !== '' && isset($export['res_id_map'][$externalId])) {
+            return null;
+        }
+
+        $customer = str_starts_with($externalId, 'partner_') ? substr($externalId, 8) : $externalId;
+        $document = trim((string) csv_value($row['id'] ?? '', 'id'));
+        $subject = trim((string) csv_value($row['subject'] ?? $row['name'] ?? '', 'subject'));
+
+        return [
+            $document,
+            (string) csv_value($row['date'] ?? $row['start'] ?? '', 'date'),
+            $customer,
+            mb_substr($subject, 0, 180),
+            $externalId === '' ? 'No customer number.' : 'Customer is not in Odoo.',
+        ];
+    }
+
+    /**
+     * @return array{0: int, 1: list<array<string, string>>}
+     */
+    public function storedProblems(Company $company, string $key, int $limit = 50): array
+    {
+        $query = GpCopyRow::query()
+            ->where('company_id', $company->id)
+            ->where('export_key', $this->problemKey($key));
+        $count = (int) (clone $query)->count();
+        $rows = [];
+        foreach ($query->orderBy('row_no')->limit($limit)->get() as $row) {
+            $values = json_decode((string) $row->payload, true);
+            if (! is_array($values)) {
+                continue;
+            }
+            $rows[] = [
+                'document' => (string) ($values[0] ?? ''),
+                'document_date' => (string) ($values[1] ?? ''),
+                'customer_number' => (string) ($values[2] ?? ''),
+                'subject' => (string) ($values[3] ?? ''),
+                'problem' => (string) ($values[4] ?? ''),
+            ];
+        }
+
+        return [$count, $rows];
+    }
+
+    public function streamProblems(Company $company, string $key): void
+    {
+        $headers = ['document', 'date', 'customer_number', 'subject', 'problem'];
+        $query = GpCopyRow::query()
+            ->where('company_id', $company->id)
+            ->where('export_key', $this->problemKey($key))
+            ->orderBy('row_no');
+        $out = fopen('php://output', 'w');
+        fwrite($out, "\xEF\xBB\xBF");
+        fputcsv($out, $headers);
+        foreach ($query->cursor() as $row) {
+            $line = json_decode((string) $row->payload, true);
+            if (! is_array($line)) {
+                continue;
+            }
+            fputcsv($out, $line);
+        }
+        fclose($out);
+    }
+
+    public function problemKey(string $key): string
+    {
+        return $key.'#problems';
+    }
+
     public function lineFrom(array $row, array $headers, array $export): ?array
     {
         $this->catalog->all();
@@ -615,6 +718,21 @@ class GpCopyService
     }
 
     private function flushBatch(GpCopy $copy, string $token, array $batch, int $processed, int $saved, string $label): bool
+    {
+        if (! $this->owns($copy, $token)) {
+            return false;
+        }
+        GpCopyRow::query()->insert($batch);
+        $copy->update([
+            'processed_count' => $processed,
+            'saved_count' => $saved,
+            'current_record' => $label,
+        ]);
+
+        return true;
+    }
+
+    private function flushProblems(GpCopy $copy, string $token, array $batch, int $processed, int $saved, string $label): bool
     {
         if (! $this->owns($copy, $token)) {
             return false;

@@ -46,6 +46,9 @@ class StepController extends Controller
                     $savedCount = $copy['saved_count'];
                     $sample = $count > 0 && $count < 5000 ? $copies->sample($company, $key, 3) : [];
                     $this->loadProblems($gp, $company, $export, $problemCount, $problems);
+                    if ($problemCount === null && str_starts_with($key, 'customer_crm_')) {
+                        [$problemCount, $problems] = $copies->storedProblems($company, $key);
+                    }
                 } else {
                     $copies->forget($company, $key);
                     $copy = $copies->snapshot($company, $key);
@@ -244,11 +247,22 @@ class StepController extends Controller
         ]);
     }
 
-    public function problems(string $key, ExportCatalog $catalog, GpConnection $gp): StreamedResponse
+    public function problems(string $key, ExportCatalog $catalog, GpConnection $gp, GpCopyService $copies): StreamedResponse
     {
         $company = Company::current();
         $export = $this->export($catalog, $key);
         $this->step($company, $key);
+        if (empty($export['problem_sql']) && str_starts_with($key, 'customer_crm_')) {
+            $name = 'odoo18_'.$key.'_left_out.csv';
+
+            return response()->streamDownload(function () use ($copies, $company, $key) {
+                @set_time_limit(0);
+                $copies->streamProblems($company, $key);
+            }, $name, [
+                'Content-Type' => 'text/csv; charset=UTF-8',
+                'Cache-Control' => 'no-store',
+            ]);
+        }
         abort_unless(! empty($export['problem_sql']), 404);
 
         $report = [

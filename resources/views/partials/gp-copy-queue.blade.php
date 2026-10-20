@@ -139,7 +139,7 @@
             if (failed.length) {
                 note.textContent = failed.map(function (item) {
                     return item.title + ' stopped at ' + num(item.processed_count) + ' of ' + num(item.record_count) + '.';
-                }).join(' ') + (copying ? ' That file is not the one being copied. The service is copying ' + shown.title + '.' : ' It will be tried again.');
+                }).join(' ') + (copying ? ' That file is not the one being copied. The service is copying ' + shown.title + '.' : ' Press Retry stopped files to run it again.');
                 retry.hidden = false;
             } else if (finished) {
                 note.textContent = 'The downloads read the MySQL copies.';

@@ -210,6 +210,9 @@ class GpCopyService
             }
             foreach ($keys as $key) {
                 $copy = $this->find($company, $key);
+                if ($copy && $copy->status === 'failed') {
+                    continue;
+                }
                 if (! $copy || $copy->status !== 'complete') {
                     $this->kickoff($company, $key);
 
@@ -234,6 +237,9 @@ class GpCopyService
                 ['status' => 'pending']
             );
             if ($copy->status === 'complete' && $copy->source_hash) {
+                return ['run_here' => false];
+            }
+            if ($copy->status === 'failed') {
                 return ['run_here' => false];
             }
             if ($this->stillRunning($copy) || $this->anyRunning($company, $key)) {

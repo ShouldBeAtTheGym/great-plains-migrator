@@ -356,7 +356,7 @@ class ConversionPlanner
         ];
     }
 
-    private function models(string $key): array
+    public function models(string $key): array
     {
         return match (true) {
             $key === 'payment_terms' => ['account.payment.term'],

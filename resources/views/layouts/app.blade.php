@@ -13,7 +13,7 @@
 
         <!-- Scripts -->
         @vite(['resources/css/app.css', 'resources/js/app.js'])
-        <link rel="stylesheet" href="/css/office.css?v=13">
+        <link rel="stylesheet" href="/css/office.css?v=14">
         <script>
             document.addEventListener('mouseover', function (event) {
                 var hint = event.target.closest('.hover-hint');

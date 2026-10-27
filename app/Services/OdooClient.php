@@ -62,6 +62,30 @@ class OdooClient
     }
 
     /**
+     * @param  list<string>  $fields
+     * @param  list<list<string>>  $rows
+     */
+    public function load(Company $company, string $model, array $fields, array $rows): mixed
+    {
+        $uid = $this->authenticate($company);
+
+        return $this->rpc($company, 'object', 'execute_kw', [
+            $company->odoo_database,
+            $uid,
+            $company->odoo_api_key,
+            $model,
+            'load',
+            [$fields, $rows],
+            ['context' => [
+                'tracking_disable' => true,
+                'mail_create_nolog' => true,
+                'mail_notrack' => true,
+                'import_file' => true,
+            ]],
+        ], 90);
+    }
+
+    /**
      * External id names already stored for this model, such as partner_1001.
      *
      * @return array<string, true>
@@ -187,7 +211,7 @@ class OdooClient
         return array_merge($rows, is_array($split) ? $split : []);
     }
 
-    private function rpc(Company $company, string $service, string $method, array $args): mixed
+    private function rpc(Company $company, string $service, string $method, array $args, int $timeout = 25): mixed
     {
         $url = rtrim((string) $company->odoo_url, '/').'/jsonrpc';
         $payload = [
@@ -203,7 +227,7 @@ class OdooClient
         $response = null;
         for ($attempt = 1; $attempt <= 3; $attempt++) {
             try {
-                $response = Http::timeout(25)
+                $response = Http::timeout($timeout)
                     ->acceptJson()
                     ->withOptions(['verify' => ! $company->odoo_trust_tls])
                     ->post($url, $payload);

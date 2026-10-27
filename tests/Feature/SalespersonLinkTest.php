@@ -52,16 +52,27 @@ class SalespersonLinkTest extends TestCase
             ->assertOk()
             ->assertSee('Create the salesperson in Odoo first')
             ->assertSee('ALT TRACIE')
-            ->assertSee('Download user file');
+            ->assertSee('Download contacts')
+            ->assertSee('Download employees');
 
         $download = $this->actingAs($user)
             ->get(route('salespeople.download'));
         $download->assertOk();
         $download->assertHeader('content-type', 'text/csv; charset=UTF-8');
         $csv = $download->streamedContent();
-        $this->assertStringContainsString('salesperson_205,"ALT TRACIE",alt.tracie.205@example.com,"Geckobrands, LLC",inbox,sales_team.group_sale_salesman,1', $csv);
+        $this->assertStringContainsString('salesperson_205,"ALT TRACIE",alt.tracie.205@example.com,salesperson_contact_205,"Geckobrands, LLC",inbox,sales_team.group_sale_salesman,0', $csv);
         $this->assertStringNotContainsString('corinne@example.com', $csv);
-        $this->assertStringContainsString('salesperson_206,"HOUSE ACCOUNT",house.account.206@example.com,"Geckobrands, LLC",inbox,sales_team.group_sale_salesman,1', $csv);
+        $this->assertStringContainsString('salesperson_206,"HOUSE ACCOUNT",house.account.206@example.com,salesperson_contact_206,"Geckobrands, LLC",inbox,sales_team.group_sale_salesman,0', $csv);
+
+        $contacts = $this->actingAs($user)->get(route('salespeople.contacts'));
+        $contacts->assertOk();
+        $contactCsv = $contacts->streamedContent();
+        $this->assertStringContainsString('salesperson_contact_205,"ALT TRACIE",alt.tracie.205@example.com,person,0,"Geckobrands, LLC"', $contactCsv);
+
+        $employees = $this->actingAs($user)->get(route('salespeople.employees'));
+        $employees->assertOk();
+        $employeeCsv = $employees->streamedContent();
+        $this->assertStringContainsString('salesperson_employee_205,"ALT TRACIE",salesperson_contact_205,salesperson_205,alt.tracie.205@example.com,"Geckobrands, LLC"', $employeeCsv);
         $this->assertStringNotContainsString('gp.205', $csv);
 
         $this->actingAs($user)

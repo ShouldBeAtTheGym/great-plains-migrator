@@ -22,6 +22,9 @@ class GpCopy extends Model
         'error',
         'started_at',
         'finished_at',
+        'api_loaded',
+        'api_failed',
+        'api_errors',
     ];
 
     protected function casts(): array
@@ -34,6 +37,9 @@ class GpCopy extends Model
             'pid' => 'integer',
             'started_at' => 'datetime',
             'finished_at' => 'datetime',
+            'api_loaded' => 'integer',
+            'api_failed' => 'integer',
+            'api_errors' => 'array',
         ];
     }
 

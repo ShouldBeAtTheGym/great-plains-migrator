@@ -47,6 +47,7 @@ Route::middleware(['office.login', 'setup.ready'])->group(function () {
     Route::get('/steps/{key}/copy', [StepController::class, 'copyStatus'])->name('steps.copy');
     Route::post('/steps/{key}/copy', [StepController::class, 'copyStart'])->name('steps.copy.start');
     Route::get('/steps/customer_price_lists/missing', [StepController::class, 'downloadMissingPriceLists'])->name('steps.price-lists.missing');
+    Route::post('/steps/{key}/api-import', [StepController::class, 'apiImport'])->name('steps.api-import');
     Route::get('/steps/{key}/download/{part?}', [StepController::class, 'download'])->where('part', '[0-9]+')->name('steps.download');
     Route::get('/steps/{key}/problems', [StepController::class, 'problems'])->name('steps.problems');
     Route::post('/steps/{key}/company', [StepController::class, 'importCompany'])->name('steps.import-company');
@@ -59,6 +60,8 @@ Route::middleware(['office.login', 'setup.ready'])->group(function () {
     Route::post('/sync/{key}/verify', [SyncController::class, 'verify'])->name('sync.verify');
     Route::get('/sync/{key}/download/{part?}', [SyncController::class, 'download'])->where('part', '[0-9]+')->name('sync.download');
     Route::get('/salespeople', [SalespersonController::class, 'show'])->name('salespeople.show');
+    Route::get('/salespeople/contacts', [SalespersonController::class, 'downloadContacts'])->name('salespeople.contacts');
+    Route::get('/salespeople/employees', [SalespersonController::class, 'downloadEmployees'])->name('salespeople.employees');
     Route::get('/salespeople/download', [SalespersonController::class, 'download'])->name('salespeople.download');
     Route::post('/salespeople', [SalespersonController::class, 'update'])->name('salespeople.update');
     Route::get('/user-fields/{model}', [UserFieldController::class, 'show'])->name('user-fields.show');

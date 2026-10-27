@@ -306,8 +306,14 @@ SQL,
             'group' => 'Import first',
             'title' => 'Units of measure',
             'hint' => 'Step 1: Enable Units of Measure in Settings. Go to Inventory → Configuration → Settings (or Sales → Configuration → Settings). Scroll down to the Products section. Check the box for Units of Measure (or Units of Measure & Packagings). Click Save at the top.',
-            'detail' => 'Each (EA) uses the Odoo unit Units. This file is only the other GP units, such as case packs.',
+            'detail' => 'Each (EA) uses the Odoo unit Units. A pack such as 12PK contains that many Units. Gross contains 144. This file is only the other GP units.',
             'odoo' => 'Units of measure',
+            'fields' => [
+                'id' => 'External ID',
+                'name' => 'Unit Name',
+                'relative_uom_id/id' => 'Reference Unit / External ID',
+                'relative_factor' => 'Contains',
+            ],
             'file' => 'odoo18_units_of_measure.csv',
             'count_sql' => <<<'SQL'
 SELECT COUNT(*) AS c FROM (
@@ -323,13 +329,13 @@ SQL,
 SELECT
     {$uom} AS id,
     u.uom AS name,
-    'uom.product_uom_categ_unit' AS [category_id/id],
-    'bigger' AS uom_type,
+    'uom.product_uom_unit' AS [relative_uom_id/id],
     CASE
-        WHEN u.uom LIKE 'CASE %' THEN TRY_CAST(REPLACE(u.uom, 'CASE ', '') AS numeric(18, 6))
+        WHEN UPPER(u.uom) = 'GROSS' THEN 144
+        WHEN UPPER(u.uom) LIKE 'CASE %' THEN COALESCE(TRY_CAST(REPLACE(u.uom, 'CASE ', '') AS numeric(18, 6)), 1)
+        WHEN UPPER(RIGHT(u.uom, 2)) = 'PK' AND TRY_CAST(LEFT(u.uom, LEN(u.uom) - 2) AS numeric(18, 6)) IS NOT NULL THEN TRY_CAST(LEFT(u.uom, LEN(u.uom) - 2) AS numeric(18, 6))
         ELSE 1
-    END AS factor_inv,
-    0.01 AS rounding
+    END AS relative_factor
 FROM (
     SELECT DISTINCT RTRIM(Selling_U_of_M) AS uom FROM dbo.spvItemMaster
     UNION
@@ -426,8 +432,8 @@ function partner_exports(): array
             'fields' => [
                 'id' => 'External ID',
                 'mobile' => 'Mobile',
-                'state_id/code' => 'State / Code',
-                'country_id/code' => 'Country / Code',
+                'state_id' => 'State',
+                'country_id' => 'Country',
                 'currency_id/id' => 'Currency / External ID',
                 'property_payment_term_id/id' => 'Customer Payment Terms / External ID',
                 'use_partner_credit_limit' => 'Partner Limit',
@@ -455,9 +461,9 @@ SELECT
     RTRIM(a.Address_Line_1) AS street,
     RTRIM(a.Address_Line_2) AS street2,
     RTRIM(a.City) AS city,
-    {$stateCode} AS [state_id/code],
+    {$stateCode} AS [state_id],
     RTRIM(a.Zip) AS zip,
-    {$customerCountry} AS [country_id/code],
+    {$customerCountry} AS [country_id],
     RTRIM(a.Contact_Person) AS gp_contact_name,
     {$customerTerm} AS [property_payment_term_id/id],
     {$customerCurrency} AS [currency_id/id],
@@ -491,8 +497,8 @@ SQL,
             ],
             'fields' => [
                 'mobile' => 'Mobile',
-                'state_id/code' => 'State / Code',
-                'country_id/code' => 'Country / Code',
+                'state_id' => 'State',
+                'country_id' => 'Country',
                 'parent_id/id' => 'Related Company / External ID',
                 'x_gp_address_code' => 'Address Code',
                 'x_gp_is_primary' => 'Primary',
@@ -519,9 +525,9 @@ SELECT
     RTRIM(a.Address_Line_1) AS street,
     RTRIM(a.Address_Line_2) AS street2,
     RTRIM(a.City) AS city,
-    {$stateCode} AS [state_id/code],
+    {$stateCode} AS [state_id],
     RTRIM(a.Zip) AS zip,
-    {$addressCountry} AS [country_id/code],
+    {$addressCountry} AS [country_id],
     RTRIM(a.Address_Code) AS x_gp_address_code,
     RTRIM(a.Address_Line_3) AS gp_street3,
     CASE WHEN RTRIM(a.Address_Code) = RTRIM(c.Primary_Addr_Code) THEN 1 ELSE 0 END AS x_gp_is_primary,
@@ -649,8 +655,8 @@ SQL,
             ],
             'fields' => [
                 'mobile' => 'Mobile',
-                'state_id/code' => 'State / Code',
-                'country_id/code' => 'Country / Code',
+                'state_id' => 'State',
+                'country_id' => 'Country',
                 'currency_id/id' => 'Currency / External ID',
                 'property_supplier_payment_term_id/id' => 'Vendor Payment Terms / External ID',
                 'comment' => 'Notes',
@@ -673,9 +679,9 @@ SELECT
     RTRIM(a.Address_Line_1) AS street,
     RTRIM(a.Address_Line_2) AS street2,
     RTRIM(a.City) AS city,
-    {$stateCode} AS [state_id/code],
+    {$stateCode} AS [state_id],
     RTRIM(a.Zip) AS zip,
-    {$vendorCountry} AS [country_id/code],
+    {$vendorCountry} AS [country_id],
     {$vendorTerm} AS [property_supplier_payment_term_id/id],
     {$vendorCurrency} AS [currency_id/id],
     RTRIM(v.Comment1) AS comment,
@@ -701,8 +707,8 @@ SQL,
             ],
             'fields' => [
                 'mobile' => 'Mobile',
-                'state_id/code' => 'State / Code',
-                'country_id/code' => 'Country / Code',
+                'state_id' => 'State',
+                'country_id' => 'Country',
                 'parent_id/id' => 'Related Company / External ID',
                 'x_gp_address_code' => 'Address Code',
             ],
@@ -724,9 +730,9 @@ SELECT
     RTRIM(a.Address_Line_1) AS street,
     RTRIM(a.Address_Line_2) AS street2,
     RTRIM(a.City) AS city,
-    {$stateCode} AS [state_id/code],
+    {$stateCode} AS [state_id],
     RTRIM(a.Zip) AS zip,
-    {$vendorCountry} AS [country_id/code],
+    {$vendorCountry} AS [country_id],
     RTRIM(a.Address_Code) AS x_gp_address_code,
     RTRIM(a.Address_Line_3) AS gp_street3
 FROM dbo.spvVendorAddr AS a

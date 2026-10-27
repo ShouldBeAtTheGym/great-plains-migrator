@@ -57,6 +57,10 @@
 .part-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr)); gap: .6rem; margin: .25rem 0 1rem; }
 .part-grid .btn { width: 100%; }
 .step-actions { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
+.step-downloads { display: contents; }
+.step-downloads .part-grid { flex: 1 0 100%; margin-bottom: 0; }
+.api-import-status { margin: .75rem 0 0; }
+.api-import-status:empty { display: none; }
 .step-skip { display: flex; justify-content: flex-end; margin-top: 1.5rem; }
 .btn-danger { background: #b42318; color: #fff; }
 .btn-danger:hover { background: #8f1c14; }

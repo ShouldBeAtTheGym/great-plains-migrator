@@ -50,53 +50,72 @@ class SalespersonController extends Controller
         ]);
     }
 
-    public function download(GpConnection $gp, OdooClient $odoo): StreamedResponse|RedirectResponse
+    public function downloadContacts(GpConnection $gp, OdooClient $odoo): StreamedResponse|RedirectResponse
     {
-        $company = Company::current();
-        try {
-            $connection = $gp->connect($company);
-            try {
-                $people = $this->people($gp->rows($connection, $this->salespersonSql()));
-            } finally {
-                if (is_resource($connection)) {
-                    sqlsrv_close($connection);
-                }
-            }
-        } catch (RuntimeException $exception) {
-            return redirect()->route('salespeople.show')->with('error', $exception->getMessage());
+        $prepared = $this->preparedPeople($gp, $odoo);
+        if ($prepared instanceof RedirectResponse) {
+            return $prepared;
         }
 
-        $companyName = trim((string) ($company->odoo_import_company_name ?: $company->odoo_company_name));
-        $domain = $this->loginDomain($company);
-        $filename = 'odoo_salesperson_users_'.date('Ymd').'.csv';
-        $used = [];
-        try {
-            $used = $this->takenLogins($odoo, $company);
-        } catch (RuntimeException) {
-            $used = [];
-        }
-
-        return response()->streamDownload(function () use ($people, $companyName, $domain, $used) {
-            $out = fopen('php://output', 'w');
-            fwrite($out, "\xEF\xBB\xBF");
-            fputcsv($out, ['id', 'name', 'login', 'company_id', 'notification_type', 'group_ids/id', 'employee']);
-            foreach ($people as $person) {
-                $id = preg_replace('/[^A-Za-z0-9._-]/', '_', $person['id']);
+        return $this->csv('odoo_salesperson_contacts_'.date('Ymd').'.csv', function ($out) use ($prepared) {
+            fputcsv($out, ['id', 'name', 'email', 'company_type', 'is_company', $prepared['company_column']]);
+            foreach ($prepared['rows'] as $row) {
                 fputcsv($out, [
-                    'salesperson_'.$id,
-                    $person['name'],
-                    $this->login($person, $domain, $used),
-                    $companyName,
-                    'inbox',
-                    'sales_team.group_sale_salesman',
-                    '1',
+                    $row['contact_id'],
+                    $row['name'],
+                    $row['login'],
+                    'person',
+                    '0',
+                    $prepared['company_value'],
                 ]);
             }
-            fclose($out);
-        }, $filename, [
-            'Content-Type' => 'text/csv; charset=UTF-8',
-            'Cache-Control' => 'no-store',
-        ]);
+        });
+    }
+
+    public function downloadEmployees(GpConnection $gp, OdooClient $odoo): StreamedResponse|RedirectResponse
+    {
+        $prepared = $this->preparedPeople($gp, $odoo);
+        if ($prepared instanceof RedirectResponse) {
+            return $prepared;
+        }
+
+        return $this->csv('odoo_salesperson_employees_'.date('Ymd').'.csv', function ($out) use ($prepared) {
+            fputcsv($out, ['id', 'name', 'work_contact_id/id', 'user_id/id', 'work_email', $prepared['company_column']]);
+            foreach ($prepared['rows'] as $row) {
+                fputcsv($out, [
+                    $row['employee_id'],
+                    $row['name'],
+                    $row['contact_id'],
+                    $row['user_id'],
+                    $row['login'],
+                    $prepared['company_value'],
+                ]);
+            }
+        });
+    }
+
+    public function download(GpConnection $gp, OdooClient $odoo): StreamedResponse|RedirectResponse
+    {
+        $prepared = $this->preparedPeople($gp, $odoo);
+        if ($prepared instanceof RedirectResponse) {
+            return $prepared;
+        }
+
+        return $this->csv('odoo_salesperson_users_'.date('Ymd').'.csv', function ($out) use ($prepared) {
+            fputcsv($out, ['id', 'name', 'login', 'partner_id/id', $prepared['company_column'], 'notification_type', 'group_ids/id', 'employee']);
+            foreach ($prepared['rows'] as $row) {
+                fputcsv($out, [
+                    $row['user_id'],
+                    $row['name'],
+                    $row['login'],
+                    $row['contact_id'],
+                    $prepared['company_value'],
+                    'inbox',
+                    'sales_team.group_sale_salesman',
+                    '0',
+                ]);
+            }
+        });
     }
 
     public function update(Request $request, GpConnection $gp, OdooClient $odoo, ExportCatalog $catalog): RedirectResponse
@@ -139,6 +158,93 @@ class SalespersonController extends Controller
         return redirect()
             ->route('salespeople.show')
             ->with('status', 'The salesperson cross-reference is saved. Download the customer file and the sales files again before you import them.');
+    }
+
+    /**
+     * @return array{rows: list<array{name: string, login: string, contact_id: string, user_id: string, employee_id: string}>, company_column: string, company_value: string}|RedirectResponse
+     */
+    private function preparedPeople(GpConnection $gp, OdooClient $odoo): array|RedirectResponse
+    {
+        $company = Company::current();
+        try {
+            $connection = $gp->connect($company);
+            try {
+                $people = $this->people($gp->rows($connection, $this->salespersonSql()));
+            } finally {
+                if (is_resource($connection)) {
+                    sqlsrv_close($connection);
+                }
+            }
+        } catch (RuntimeException $exception) {
+            return redirect()->route('salespeople.show')->with('error', $exception->getMessage());
+        }
+
+        $domain = $this->loginDomain($company);
+        $used = [];
+        try {
+            $used = $this->takenLogins($odoo, $company);
+        } catch (RuntimeException) {
+            $used = [];
+        }
+        [$companyColumn, $companyValue] = $this->companyColumn($odoo, $company);
+
+        $rows = [];
+        foreach ($people as $person) {
+            $id = preg_replace('/[^A-Za-z0-9._-]/', '_', $person['id']) ?? '';
+            $rows[] = [
+                'name' => $person['name'],
+                'login' => $this->login($person, $domain, $used),
+                'contact_id' => 'salesperson_contact_'.$id,
+                'user_id' => 'salesperson_'.$id,
+                'employee_id' => 'salesperson_employee_'.$id,
+            ];
+        }
+
+        return [
+            'rows' => $rows,
+            'company_column' => $companyColumn,
+            'company_value' => $companyValue,
+        ];
+    }
+
+    /**
+     * @return array{0: string, 1: string}
+     */
+    private function companyColumn(OdooClient $odoo, Company $company): array
+    {
+        $companyId = (int) $company->odoo_import_company_id;
+        if ($companyId > 0) {
+            try {
+                $rows = $odoo->execute($company, 'ir.model.data', 'search_read', [[
+                    ['model', '=', 'res.company'],
+                    ['res_id', '=', $companyId],
+                ]], [
+                    'fields' => ['module', 'name'],
+                    'limit' => 1,
+                ]);
+                $module = trim((string) ($rows[0]['module'] ?? ''));
+                $name = trim((string) ($rows[0]['name'] ?? ''));
+                if ($module !== '' && $name !== '') {
+                    return ['company_id/id', $module.'.'.$name];
+                }
+            } catch (RuntimeException) {
+            }
+        }
+
+        return ['company_id', trim((string) ($company->odoo_import_company_name ?: $company->odoo_company_name))];
+    }
+
+    private function csv(string $filename, callable $write): StreamedResponse
+    {
+        return response()->streamDownload(function () use ($write) {
+            $out = fopen('php://output', 'w');
+            fwrite($out, "\xEF\xBB\xBF");
+            $write($out);
+            fclose($out);
+        }, $filename, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Cache-Control' => 'no-store',
+        ]);
     }
 
     private function salespersonSql(): string

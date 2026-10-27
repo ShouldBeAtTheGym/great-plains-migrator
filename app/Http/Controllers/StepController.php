@@ -9,6 +9,7 @@ use App\Services\ExportCatalog;
 use App\Services\GpConnection;
 use App\Services\GpCopyService;
 use App\Services\OdooClient;
+use App\Services\OdooImporter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -119,7 +120,7 @@ class StepController extends Controller
 
         return redirect()
             ->route('steps.show', $key)
-            ->with('status', 'Customers will import into '.$match['name'].'. Download the file again. The company_id column is '.$match['name'].'.');
+            ->with('status', 'Customers will import into '.$match['name'].'. Download the file again.');
     }
 
     public function copyStatus(string $key, GpCopyService $copies): JsonResponse
@@ -137,6 +138,19 @@ class StepController extends Controller
         $copies->kickoff($company, $key);
 
         return response()->json($copies->snapshot($company, $key));
+    }
+
+    public function apiImport(Request $request, string $key, OdooImporter $importer): JsonResponse
+    {
+        @set_time_limit(180);
+        $company = Company::current();
+        $step = $this->step($company, $key);
+        $current = ConversionStep::currentFor($company);
+        if (! $step->isComplete() && (! $current || $current->id !== $step->id)) {
+            abort(403, 'This file opens when it is the current step.');
+        }
+
+        return response()->json($importer->nextBatch($company, $key, $request->boolean('restart')));
     }
 
     public function download(string $key, ExportCatalog $catalog, GpCopyService $copies, ?int $part = null): StreamedResponse|RedirectResponse

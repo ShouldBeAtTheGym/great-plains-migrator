@@ -97,6 +97,9 @@ class GpCopyService
             'pid' => null,
             'error' => null,
             'finished_at' => null,
+            'api_loaded' => 0,
+            'api_failed' => 0,
+            'api_errors' => null,
         ]);
     }
 
@@ -500,11 +503,10 @@ class GpCopyService
                 'message' => $exception->getMessage(),
             ]);
             if ($copy && $this->owns($copy, $token)) {
+                $message = trim($exception->getMessage());
                 $copy->update([
                     'status' => 'failed',
-                    'error' => $exception instanceof RuntimeException
-                        ? $exception->getMessage()
-                        : 'The copy from Great Plains failed.',
+                    'error' => $message !== '' ? mb_substr($message, 0, 500) : 'The copy from Great Plains failed.',
                     'pid' => null,
                     'finished_at' => now(),
                 ]);
@@ -761,6 +763,8 @@ class GpCopyService
             'current_record' => (string) ($copy->current_record ?? ''),
             'error' => (string) ($copy->error ?? ''),
             'percent' => $percent,
+            'api_loaded' => (int) ($copy->api_loaded ?? 0),
+            'api_failed' => (int) ($copy->api_failed ?? 0),
         ];
     }
 

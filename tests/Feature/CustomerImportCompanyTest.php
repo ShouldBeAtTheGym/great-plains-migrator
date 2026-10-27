@@ -24,10 +24,16 @@ class CustomerImportCompanyTest extends TestCase
         ]);
 
         $this->mock(OdooClient::class, function ($mock) {
-            $mock->shouldReceive('execute')->andReturn([
-                ['id' => 1, 'name' => 'Blueoco, LLC'],
-                ['id' => 2, 'name' => 'Geckobrands, LLC'],
-            ]);
+            $mock->shouldReceive('execute')->andReturnUsing(function ($company, string $model) {
+                if ($model === 'ir.model.data') {
+                    return [['module' => 'odooexport', 'name' => 'company_2']];
+                }
+
+                return [
+                    ['id' => 1, 'name' => 'Blueoco, LLC'],
+                    ['id' => 2, 'name' => 'Geckobrands, LLC'],
+                ];
+            });
         });
 
         $this->actingAs($user)
@@ -45,8 +51,8 @@ class CustomerImportCompanyTest extends TestCase
             'fields' => [],
         ]);
 
-        $this->assertSame('Geckobrands, LLC', $export['extra']['company_id']);
-        $this->assertSame('Company', $export['fields']['company_id']);
+        $this->assertSame('odooexport.company_2', $export['extra']['company_id/id']);
+        $this->assertSame('Company / External ID', $export['fields']['company_id/id']);
     }
 
     public function test_an_unknown_company_is_rejected(): void

@@ -139,7 +139,7 @@
                 <h3 style="margin-top:0">How to move this file into Odoo</h3>
                 @include('partials.gp-copy-queue', ['queue' => $queue, 'focus' => $export['key'], 'reload' => true])
                 <ol class="steps">
-                    <li><span>@if (!empty($export['problem_sql'])) Look at the orders left out, then download the CSV. @else Download the CSV from this page. @endif @if($count !== null) Great Plains currently has {{ number_format($count) }} rows in this file. @endif @if (($parts ?? 1) > 1) Odoo will not take the whole file. Import part 1, then part 2, and so on. Each part has {{ number_format(\App\Services\ExportCatalog::PART_ROWS) }} rows. @endif</span></li>
+                    <li><span>@if (!empty($export['problem_sql'])) Look at the orders left out, then download the CSV or press <strong>Load into Odoo</strong>. @else Download the CSV from this page, or press <strong>Load into Odoo</strong> to send the same rows through the API. @endif @if($count !== null) Great Plains currently has {{ number_format($count) }} rows in this file. @endif @if (($parts ?? 1) > 1) Odoo will not take the whole CSV in one upload. Import part 1, then part 2, and so on. Each part has {{ number_format(\App\Services\ExportCatalog::PART_ROWS) }} rows. Load into Odoo sends the file in smaller batches. @endif</span></li>
                     <li><span>In Odoo, open <strong>{{ $guide['screen'] }}</strong>.@if (!empty($export['hint'])) @include('partials.hover-hint', ['label' => 'Do not see?', 'hint' => $export['hint'], 'callout' => true])@endif</span></li>
                     <li><span>On that list, open the gear menu and choose <strong>Import records</strong>. Upload the CSV.</span></li>
                     <li><span>Match each file column to the Odoo field in the column map. An orange “To import, select a field…” row is not a missing checklist step. Pick the field the map names, or <strong>Do not import</strong> when the map says so. Set every column that starts with <strong>gp_</strong> to <strong>Do not import</strong>, even if Odoo guessed a field.</span></li>
@@ -182,31 +182,34 @@
                     <li><span>Come back here and press <strong>Confirm import</strong>. This app asks Odoo whether the records exist. When they do, the checklist moves on.</span></li>
                 </ol>
                 @if ($current)
-                    <div id="step-downloads" @if (($copy['status'] ?? '') !== 'complete') hidden @endif>
-                        @if (($parts ?? 1) > 1)
-                            <div class="part-grid">
-                                @for ($part = 1; $part <= $parts; $part++)
-                                    <a class="btn btn-primary" href="{{ route('steps.download', ['key' => $export['key'], 'part' => $part]) }}">Part {{ $part }}</a>
-                                @endfor
-                            </div>
-                        @endif
-                        @if (($parts ?? 1) <= 1)
-                            <div class="step-actions" style="margin-bottom:.6rem;">
-                                @if (($export['key'] ?? '') === 'customers' && count($odooCompanies ?? []) > 1)
-                                    <button class="btn btn-primary" id="download-csv" type="button">Download CSV</button>
-                                @else
-                                    <a class="btn btn-primary" href="{{ route('steps.download', $export['key']) }}">Download CSV</a>
-                                @endif
-                            </div>
-                        @endif
-                    </div>
                     <div class="step-actions">
+                        <div id="step-downloads" class="step-downloads" @if (($copy['status'] ?? '') !== 'complete') hidden @endif>
+                            @if (($parts ?? 1) > 1)
+                                <div class="part-grid">
+                                    @for ($part = 1; $part <= $parts; $part++)
+                                        <a class="btn btn-primary" href="{{ route('steps.download', ['key' => $export['key'], 'part' => $part]) }}">Part {{ $part }}</a>
+                                    @endfor
+                                </div>
+                            @elseif (($export['key'] ?? '') === 'customers' && count($odooCompanies ?? []) > 1)
+                                <button class="btn btn-primary" id="download-csv" type="button">Download CSV</button>
+                            @else
+                                <a class="btn btn-primary" href="{{ route('steps.download', $export['key']) }}">Download CSV</a>
+                            @endif
+                            <button class="btn btn-primary" id="load-api" type="button">
+                                @if (($copy['api_loaded'] ?? 0) > 0 && ($copy['api_loaded'] ?? 0) < ($copy['saved_count'] ?? 0))
+                                    Continue loading into Odoo
+                                @else
+                                    Load into Odoo
+                                @endif
+                            </button>
+                        </div>
                         <button class="btn start-live" id="confirm-import" type="button">Confirm import</button>
                         @if (($export['key'] ?? '') === 'customers')
                             <a class="btn btn-primary" href="{{ route('user-fields.show', 'customers') }}">Choose SalesPad customer user fields</a>
                         @endif
                         <a class="btn btn-ghost" href="{{ route('dashboard') }}">Back to checklist</a>
                     </div>
+                    <p id="api-import-status" class="muted api-import-status">@if (($copy['api_loaded'] ?? 0) > 0)Loaded {{ number_format($copy['api_loaded']) }} of {{ number_format($copy['saved_count'] ?? 0) }}.@if (($copy['api_failed'] ?? 0) > 0) {{ number_format($copy['api_failed']) }} could not be loaded.@endif @endif</p>
                     <div id="confirm-message" class="muted"></div>
                     <div class="step-skip">
                         <form method="POST" action="{{ route('steps.skip', $export['key']) }}" onsubmit="return confirm('Skip this file? The checklist moves on. Nothing is changed in Odoo.');">
@@ -317,6 +320,59 @@
     @endif
     @if ($current)
         <script>
+            var loadApi = document.getElementById('load-api');
+            if (loadApi) {
+                loadApi.addEventListener('click', async function () {
+                    var button = this;
+                    var message = document.getElementById('api-import-status');
+                    var restart = false;
+                    if (button.dataset.done === '1' && !window.confirm('Load this file into Odoo again? Rows that are already there are updated.')) {
+                        return;
+                    }
+                    if (button.dataset.done === '1') {
+                        restart = true;
+                        button.dataset.done = '0';
+                    }
+                    button.disabled = true;
+                    message.textContent = 'Sending a batch to Odoo...';
+                    async function step() {
+                        try {
+                            var response = await fetch(@json(route('steps.api-import', $export['key'])), {
+                                method: 'POST',
+                                headers: {
+                                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                                    'Accept': 'application/json',
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({ restart: restart })
+                            });
+                            restart = false;
+                            var body = await response.json();
+                            message.textContent = body.message || 'Odoo did not accept that batch.';
+                            if (body.batch_error) {
+                                message.textContent += ' Last skipped row: ' + body.batch_error;
+                            }
+                            if (!response.ok || body.ok === false) {
+                                button.disabled = false;
+                                return;
+                            }
+                            if (body.done) {
+                                button.dataset.done = '1';
+                                button.disabled = false;
+                                button.textContent = 'Load into Odoo again';
+                                return;
+                            }
+                            button.textContent = 'Loading ' + Number(body.loaded || 0).toLocaleString() + ' of ' + Number(body.total || 0).toLocaleString();
+                            window.setTimeout(step, 0);
+                        } catch (error) {
+                            message.textContent = 'The load paused. Press the button to continue.';
+                            button.disabled = false;
+                            button.textContent = 'Continue loading into Odoo';
+                        }
+                    }
+                    step();
+                });
+            }
             document.getElementById('confirm-import').addEventListener('click', async function () {
                 var button = this;
                 var message = document.getElementById('confirm-message');

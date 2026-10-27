@@ -47,8 +47,14 @@ class ExportCatalog
         if (in_array(($export['key'] ?? ''), ['customers', 'customer_price_lists'], true)
             && (int) $company->odoo_import_company_id > 0
             && $importCompanyName !== '') {
-            $export['extra']['company_id'] = $importCompanyName;
-            $export['fields']['company_id'] = 'Company';
+            if (($export['key'] ?? '') === 'customers') {
+                $xmlid = $this->externalId($company, 'res.company', (int) $company->odoo_import_company_id, 'company_'.$company->odoo_import_company_id);
+                $export['extra']['company_id/id'] = $xmlid;
+                $export['fields']['company_id/id'] = 'Company / External ID';
+            } else {
+                $export['extra']['company_id'] = $importCompanyName;
+                $export['fields']['company_id'] = 'Company';
+            }
         }
 
         $key = (string) ($export['key'] ?? '');

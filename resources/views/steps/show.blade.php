@@ -8,6 +8,14 @@
         <div class="max-w-7xl mx-auto sm:px-6 lg:px-8">
             @include('partials.alerts')
             <p class="lead">{{ $export['detail'] }} This file is for the Odoo screen <strong>{{ $export['odoo'] }}</strong>.</p>
+            @if (($export['key'] ?? '') === 'stock_locations')
+                <div class="card" style="margin-bottom:1rem;border:2px solid #0f766e;">
+                    <h3 style="margin-top:0;">Upload the warehouses first</h3>
+                    <p>The bins file does not create CA/Stock or US/Stock. Those locations appear when the warehouse file is imported. Open <strong>Inventory → Configuration → Warehouses</strong> and import that file. On <strong>name</strong>, choose <strong>Warehouse</strong>. On <strong>code</strong>, choose <strong>Short Name</strong>. Then come back and import these bins on <strong>Locations</strong>.</p>
+                    <a class="btn btn-primary" href="{{ route('steps.download', 'warehouses') }}">Download warehouses CSV</a>
+                    <a class="btn btn-ghost" href="{{ route('steps.show', 'warehouses') }}">Open the warehouse step</a>
+                </div>
+            @endif
             @if ($loadError)
                 <div class="alert alert-bad">{{ $loadError }}</div>
             @endif
@@ -48,10 +56,14 @@
                 </div>
             @endif
 
-            @if (($export['key'] ?? '') === 'customers' || str_starts_with($export['key'] ?? '', 'sales_'))
+            @if (($export['key'] ?? '') === 'customers' || in_array(($export['key'] ?? ''), ['prospects', 'prospect_contacts'], true) || str_starts_with($export['key'] ?? '', 'sales_'))
                 <div class="card" style="margin-bottom:1rem;">
                     <h3 style="margin-top:0;">Salesperson</h3>
-                    <p>Match each Great Plains person id to an Odoo user before you download this file. Orders imported without that match have no salesperson, and filling them in later means opening the orders one by one.</p>
+                    @if (in_array(($export['key'] ?? ''), ['prospects', 'prospect_contacts'], true))
+                        <p>Match each Great Plains salesperson to an Odoo user before you download this file. A row whose salesperson is not matched is imported with no salesperson.</p>
+                    @else
+                        <p>Match each Great Plains person id to an Odoo user before you download this file. Orders imported without that match have no salesperson, and filling them in later means opening the orders one by one.</p>
+                    @endif
                     @if (isset($export['fields']['user_id/id']) || isset($export['fields']['invoice_user_id/id']))
                         <p>On the salesperson column, choose <strong>Salesperson / External ID</strong>.</p>
                     @endif
@@ -59,12 +71,20 @@
                 </div>
             @endif
 
-            @if (str_starts_with($export['key'] ?? '', 'customer_crm_') && $problemCount !== null)
+            @if ((str_starts_with($export['key'] ?? '', 'customer_crm_') || in_array(($export['key'] ?? ''), ['customer_interactions', 'prospect_interactions'], true)) && $problemCount !== null)
                 <div class="card" style="margin-bottom:1rem;">
                     <h3 style="margin-top:0;">Records left out of this file</h3>
-                    <p>A CRM record whose customer is not in Odoo is left out. The rest of the file can still be imported. Download the report to see the customer number on each skipped row.</p>
+                    @if (($export['key'] ?? '') === 'prospect_interactions')
+                        <p>An interaction whose opportunity is not in Odoo is left out. Import the prospect file on CRM first, then download this file again. The report lists the prospect id on each skipped row.</p>
+                    @else
+                        <p>A record whose customer is not in Odoo is left out. The rest of the file can still be imported. Download the report to see the customer number on each skipped row.</p>
+                    @endif
                     @if ($problemCount === 0)
-                        <p>None. Every record in this file matches a customer in Odoo.</p>
+                        @if (($export['key'] ?? '') === 'prospect_interactions')
+                            <p>None. Every interaction matches an opportunity in Odoo.</p>
+                        @else
+                            <p>None. Every record in this file matches a customer in Odoo.</p>
+                        @endif
                     @elseif ($problemCount > 0)
                         <p><strong>{{ number_format($problemCount) }}</strong> {{ $problemCount === 1 ? 'record is' : 'records are' }} left out.</p>
                         <p><a class="btn btn-primary" href="{{ route('steps.problems', $export['key']) }}">Download problem report</a></p>
@@ -73,7 +93,7 @@
                                 <table class="export-table">
                                     <thead>
                                         <tr>
-                                            @foreach (['document' => 'Record', 'document_date' => 'Date', 'customer_number' => 'Customer number', 'subject' => 'Subject', 'problem' => 'Problem'] as $column => $label)
+                                            @foreach (['document' => 'Record', 'document_date' => 'Date', 'customer_number' => (($export['key'] ?? '') === 'prospect_interactions' ? 'Prospect' : 'Customer number'), 'subject' => 'Subject', 'problem' => 'Problem'] as $column => $label)
                                                 <th>{{ $label }}</th>
                                             @endforeach
                                         </tr>
@@ -139,7 +159,7 @@
                 <h3 style="margin-top:0">How to move this file into Odoo</h3>
                 @include('partials.gp-copy-queue', ['queue' => $queue, 'focus' => $export['key'], 'reload' => true])
                 <ol class="steps">
-                    <li><span>@if (!empty($export['problem_sql'])) Look at the orders left out, then download the CSV or press <strong>Load into Odoo</strong>. @else Download the CSV from this page, or press <strong>Load into Odoo</strong> to send the same rows through the API. @endif @if($count !== null) Great Plains currently has {{ number_format($count) }} rows in this file. @endif @if (($parts ?? 1) > 1) Odoo will not take the whole CSV in one upload. Import part 1, then part 2, and so on. Each part has {{ number_format(\App\Services\ExportCatalog::PART_ROWS) }} rows. Load into Odoo sends the file in smaller batches. @endif</span></li>
+                    <li><span>@if (!empty($export['problem_sql'])) Look at the orders left out, then download the CSV. @else Download the CSV from this page. @endif @if($count !== null) Great Plains currently has {{ number_format($count) }} rows in this file. @endif @if (($parts ?? 1) > 1) Odoo will not take the whole CSV in one upload. Import part 1, then part 2, and so on. Each part has {{ number_format(\App\Services\ExportCatalog::PART_ROWS) }} rows. @endif</span></li>
                     <li><span>In Odoo, open <strong>{{ $guide['screen'] }}</strong>.@if (!empty($export['hint'])) @include('partials.hover-hint', ['label' => 'Do not see?', 'hint' => $export['hint'], 'callout' => true])@endif</span></li>
                     <li><span>On that list, open the gear menu and choose <strong>Import records</strong>. Upload the CSV.</span></li>
                     <li><span>Match each file column to the Odoo field in the column map. An orange “To import, select a field…” row is not a missing checklist step. Pick the field the map names, or <strong>Do not import</strong> when the map says so. Set every column that starts with <strong>gp_</strong> to <strong>Do not import</strong>, even if Odoo guessed a field.</span></li>
@@ -165,11 +185,14 @@
                     @if (str_ends_with($export['key'] ?? '', '_lines') && str_starts_with($export['key'] ?? '', 'sales_'))
                         <li><span>A kit, or an item that is no longer in the product file, has a blank product column. The description and price stay on the line. Kits were left out of the product import.</span></li>
                     @endif
+                    @if (($export['key'] ?? '') === 'warehouses')
+                        <li><span>On <strong>name</strong>, choose <strong>Warehouse</strong>. That name is required. On <strong>code</strong>, choose <strong>Short Name</strong>. That is the Great Plains site, such as US or CA. On <strong>company_id/id</strong>, choose <strong>Company / External ID</strong>. If Company is not in the list, set <strong>company_id/id</strong> to <strong>Do not import</strong>. Odoo then creates the stock location for that warehouse, such as US/Stock.</span></li>
+                    @endif
                     @if (($export['key'] ?? '') === 'stock_locations')
-                        <li><span>If <strong>Locations</strong> is not in the menu, go to <strong>Inventory → Configuration → Settings</strong>. Under <strong>Warehouse</strong>, check <strong>Storage Locations</strong> and click <strong>Save</strong>. Locations then appears with Warehouses and Operations Types.</span></li>
+                        <li><span>Import the warehouses first. On <strong>location_id</strong>, choose <strong>Parent Location</strong>. The value is the warehouse short name and /Stock, such as US/Stock. If <strong>Locations</strong> is not in the menu, go to <strong>Inventory → Configuration → Settings</strong>. Under <strong>Warehouse</strong>, check <strong>Storage Locations</strong> and click <strong>Save</strong>.</span></li>
                     @endif
                     @if (($export['key'] ?? '') === 'inventory_on_hand')
-                        <li><span>On <strong>product_id/id</strong>, choose <strong>Product / External ID</strong>. The value starts with <strong>__import__.product_variant_</strong>. That is the variant of the product imported earlier. Archived products are included. After the import, click <strong>Apply All</strong>. That writes the counted quantity into On Hand. Until then, On Hand stays at zero.</span></li>
+                        <li><span>On <strong>product_id/id</strong>, choose <strong>Product / External ID</strong>. The value starts with <strong>__import__.product_variant_</strong>. On <strong>location_id</strong>, choose <strong>Do not import</strong>. That cell is the bin name, such as <strong>US/Stock/PICK ROOM</strong>. On <strong>location_id/id</strong>, choose <strong>Location / External ID</strong>. Odoo rejects the row when both the location name and the location external id are mapped. On <strong>gp_qty_allocated</strong>, choose <strong>Do not import</strong>. After the import, click <strong>Apply All</strong>. That writes the counted quantity into On Hand. Until then, On Hand stays at zero.</span></li>
                     @endif
                     @if (($export['key'] ?? '') === 'products')
                         <li><span>Great Plains kits are left out. A kit is not stock. It points at the other products that go in the box. Odoo can do that later with a Kit bill of materials in Manufacturing, after the real products are imported. Do not add the kits as normal products.</span></li>
@@ -195,13 +218,6 @@
                             @else
                                 <a class="btn btn-primary" href="{{ route('steps.download', $export['key']) }}">Download CSV</a>
                             @endif
-                            <button class="btn btn-primary" id="load-api" type="button">
-                                @if (($copy['api_loaded'] ?? 0) > 0 && ($copy['api_loaded'] ?? 0) < ($copy['saved_count'] ?? 0))
-                                    Continue loading into Odoo
-                                @else
-                                    Load into Odoo
-                                @endif
-                            </button>
                         </div>
                         <button class="btn start-live" id="confirm-import" type="button">Confirm import</button>
                         @if (($export['key'] ?? '') === 'customers')
@@ -209,7 +225,6 @@
                         @endif
                         <a class="btn btn-ghost" href="{{ route('dashboard') }}">Back to checklist</a>
                     </div>
-                    <p id="api-import-status" class="muted api-import-status">@if (($copy['api_loaded'] ?? 0) > 0)Loaded {{ number_format($copy['api_loaded']) }} of {{ number_format($copy['saved_count'] ?? 0) }}.@if (($copy['api_failed'] ?? 0) > 0) {{ number_format($copy['api_failed']) }} could not be loaded.@endif @endif</p>
                     <div id="confirm-message" class="muted"></div>
                     <div class="step-skip">
                         <form method="POST" action="{{ route('steps.skip', $export['key']) }}" onsubmit="return confirm('Skip this file? The checklist moves on. Nothing is changed in Odoo.');">
@@ -231,6 +246,22 @@
                         >Recheck</button>
                         <a class="btn btn-ghost" href="{{ route('dashboard') }}">Back to checklist</a>
                     </p>
+                @elseif (($copy['status'] ?? '') === 'complete')
+                    <div class="step-actions">
+                        <div id="step-downloads" class="step-downloads">
+                            @if (($parts ?? 1) > 1)
+                                <div class="part-grid">
+                                    @for ($part = 1; $part <= $parts; $part++)
+                                        <a class="btn btn-primary" href="{{ route('steps.download', ['key' => $export['key'], 'part' => $part]) }}">Part {{ $part }}</a>
+                                    @endfor
+                                </div>
+                            @else
+                                <a class="btn btn-primary" href="{{ route('steps.download', $export['key']) }}">Download CSV</a>
+                            @endif
+                        </div>
+                        <a class="btn btn-ghost" href="{{ route('dashboard') }}">Back to checklist</a>
+                    </div>
+                    <p class="muted">This file is saved and can be downloaded now. Confirm import stays on the lit Start step.</p>
                 @else
                     <div class="alert alert-bad">This step is waiting. Finish the lit Start button on the checklist first. You can read these instructions now.</div>
                     <a class="btn btn-ghost" href="{{ route('dashboard') }}">Back to checklist</a>
@@ -320,59 +351,6 @@
     @endif
     @if ($current)
         <script>
-            var loadApi = document.getElementById('load-api');
-            if (loadApi) {
-                loadApi.addEventListener('click', async function () {
-                    var button = this;
-                    var message = document.getElementById('api-import-status');
-                    var restart = false;
-                    if (button.dataset.done === '1' && !window.confirm('Load this file into Odoo again? Rows that are already there are updated.')) {
-                        return;
-                    }
-                    if (button.dataset.done === '1') {
-                        restart = true;
-                        button.dataset.done = '0';
-                    }
-                    button.disabled = true;
-                    message.textContent = 'Sending a batch to Odoo...';
-                    async function step() {
-                        try {
-                            var response = await fetch(@json(route('steps.api-import', $export['key'])), {
-                                method: 'POST',
-                                headers: {
-                                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
-                                    'Accept': 'application/json',
-                                    'Content-Type': 'application/json'
-                                },
-                                body: JSON.stringify({ restart: restart })
-                            });
-                            restart = false;
-                            var body = await response.json();
-                            message.textContent = body.message || 'Odoo did not accept that batch.';
-                            if (body.batch_error) {
-                                message.textContent += ' Last skipped row: ' + body.batch_error;
-                            }
-                            if (!response.ok || body.ok === false) {
-                                button.disabled = false;
-                                return;
-                            }
-                            if (body.done) {
-                                button.dataset.done = '1';
-                                button.disabled = false;
-                                button.textContent = 'Load into Odoo again';
-                                return;
-                            }
-                            button.textContent = 'Loading ' + Number(body.loaded || 0).toLocaleString() + ' of ' + Number(body.total || 0).toLocaleString();
-                            window.setTimeout(step, 0);
-                        } catch (error) {
-                            message.textContent = 'The load paused. Press the button to continue.';
-                            button.disabled = false;
-                            button.textContent = 'Continue loading into Odoo';
-                        }
-                    }
-                    step();
-                });
-            }
             document.getElementById('confirm-import').addEventListener('click', async function () {
                 var button = this;
                 var message = document.getElementById('confirm-message');

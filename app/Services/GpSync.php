@@ -330,11 +330,16 @@ class GpSync
             'customers' => ['model' => 'res.partner', 'prefix' => 'partner_', 'group' => 'partner', 'exclude' => ['partner_addr_']],
             'customer_addresses' => ['model' => 'res.partner', 'prefix' => 'partner_addr_', 'group' => 'partner_addr', 'exclude' => []],
             'customer_crm_notes' => ['model' => 'mail.message', 'prefix' => 'crm_note_', 'group' => 'crm_note', 'exclude' => []],
+            'customer_interactions' => ['model' => 'mail.message', 'prefix' => 'interaction_', 'group' => 'interaction', 'exclude' => []],
             'customer_crm_events' => ['model' => 'calendar.event', 'prefix' => 'crm_event_', 'group' => 'crm_event', 'exclude' => []],
+            'prospects' => ['model' => 'crm.lead', 'prefix' => 'prospect_', 'group' => 'prospect', 'exclude' => ['prospect_contact_', 'prospect_interaction_']],
+            'prospect_contacts' => ['model' => 'res.partner', 'prefix' => 'prospect_contact_', 'group' => 'prospect_contact', 'exclude' => []],
+            'prospect_interactions' => ['model' => 'mail.message', 'prefix' => 'prospect_interaction_', 'group' => 'prospect_interaction', 'exclude' => []],
             'vendors' => ['model' => 'res.partner', 'prefix' => 'vendor_', 'group' => 'vendor', 'exclude' => ['vendor_addr_']],
             'vendor_addresses' => ['model' => 'res.partner', 'prefix' => 'vendor_addr_', 'group' => 'vendor_addr', 'exclude' => []],
             'products' => ['model' => 'product.template', 'prefix' => 'product_', 'group' => 'product', 'exclude' => ['product_categ_', 'product_variant_']],
-            'stock_locations' => ['model' => 'stock.location', 'prefix' => 'stock_location_', 'group' => 'stock_location', 'exclude' => []],
+            'warehouses' => ['model' => 'stock.warehouse', 'prefix' => 'warehouse_', 'group' => 'warehouse', 'exclude' => []],
+            'stock_locations' => ['model' => 'stock.location', 'prefix' => 'stock_bin_', 'group' => 'stock_bin', 'exclude' => []],
             default => null,
         };
 

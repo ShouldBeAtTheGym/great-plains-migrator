@@ -19,6 +19,7 @@ class GpCopyService
     public function __construct(
         private ExportCatalog $catalog,
         private GpConnection $gp,
+        private InteractionLog $interactions,
     ) {}
 
     public function snapshot(Company $company, string $key): array
@@ -36,11 +37,17 @@ class GpCopyService
         ksort($extra);
         ksort($categories);
 
+        $resolved = [];
+        if (($export['resolve_res_id'] ?? '') === 'crm.lead' && is_array($export['res_id_map'] ?? null)) {
+            $resolved = $export['res_id_map'];
+            ksort($resolved);
+        }
+
         return hash('sha256', json_encode([
             'sql' => (string) ($export['sql'] ?? ''),
             'extra' => $extra,
             'categories' => $categories,
-            'partners' => [],
+            'partners' => $resolved,
         ]));
     }
 
@@ -60,15 +67,28 @@ class GpCopyService
     public function applyLiveLookups(Company $company, array $export): array
     {
         $sql = (string) ($export['sql'] ?? '');
-        $needs = ($export['resolve_res_id'] ?? null) === 'res.partner'
-            || str_contains($sql, '[[event_user_id]]');
-        if (! $needs) {
+        $resolveModel = (string) ($export['resolve_res_id'] ?? '');
+        $needs = $resolveModel === 'res.partner'
+            || str_contains($sql, '[[event_user_id]]')
+            || str_contains($sql, '[[note_author_id]]')
+            || str_contains($sql, '[[interaction_author_id]]');
+        $needsLeadIds = $resolveModel === 'crm.lead';
+        if (! $needs && ! $needsLeadIds) {
             return $export;
         }
 
         $connection = $this->gp->connect($company);
         try {
-            return $this->catalog->assignCrmEventUsers($company, $connection, $export);
+            if ($needs) {
+                $export = $this->catalog->assignCrmEventUsers($company, $connection, $export);
+                $export = $this->catalog->assignCrmNoteAuthors($company, $connection, $export);
+                $export = $this->catalog->assignCrmInteractionAuthors($company, $connection, $export);
+            }
+            if ($needsLeadIds) {
+                $export = $this->catalog->attachPartnerResIds($company, $connection, $export);
+            }
+
+            return $export;
         } finally {
             if (is_resource($connection)) {
                 sqlsrv_close($connection);
@@ -400,6 +420,8 @@ class GpCopyService
             $export = $this->catalog->prepare($company, $export);
             $connection = $this->gp->connect($company);
             $export = $this->catalog->assignCrmEventUsers($company, $connection, $export);
+            $export = $this->catalog->assignCrmNoteAuthors($company, $connection, $export);
+            $export = $this->catalog->assignCrmInteractionAuthors($company, $connection, $export);
             $export = $this->catalog->attachPartnerResIds($company, $connection, $export);
             $hash = $this->fingerprint($export);
 
@@ -420,7 +442,7 @@ class GpCopyService
                     static fn ($field) => $field['Name'],
                     sqlsrv_field_metadata($statement) ?: []
                 ),
-                static fn ($name) => $name !== 'export_part_row'
+                static fn ($name) => $name !== 'export_part_row' && ! in_array(strtolower((string) $name), ['note_log', 'customer_key'], true)
             ));
             foreach (array_keys($export['extra'] ?? []) as $name) {
                 $headers[] = $name;
@@ -455,10 +477,17 @@ class GpCopyService
 
                     continue;
                 }
-                $line = $this->lineFrom($row, $headers, $export);
-                if ($line !== null) {
+                $pieces = $key === 'customer_interactions' ? $this->interactions->rows($row) : [$row];
+                foreach ($pieces as $piece) {
+                    if ($key === 'customer_crm_events') {
+                        $piece = $this->attachEventCustomer($piece, $export);
+                    }
+                    $line = $this->lineFrom($piece, $headers, $export);
+                    if ($line === null) {
+                        continue;
+                    }
                     $saved++;
-                    $label = $this->recordLabel($row);
+                    $label = $this->recordLabel($piece);
                     $batch[] = [
                         'company_id' => $company->id,
                         'export_key' => $key,
@@ -466,6 +495,12 @@ class GpCopyService
                         'record_key' => mb_substr($label, 0, 180),
                         'payload' => json_encode($line, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE),
                     ];
+                    if (count($batch) >= self::BATCH && ! $this->flushBatch($copy, $token, $batch, $processed, $saved, $label)) {
+                        return;
+                    }
+                    if (count($batch) >= self::BATCH) {
+                        $batch = [];
+                    }
                 }
                 if (count($batch) >= self::BATCH && ! $this->flushBatch($copy, $token, $batch, $processed, $saved, $label)) {
                     return;
@@ -487,7 +522,7 @@ class GpCopyService
             }
             $copy->update([
                 'status' => 'complete',
-                'record_count' => max($total, $processed),
+                'record_count' => $key === 'customer_interactions' ? $saved : max($total, $processed),
                 'processed_count' => $processed,
                 'saved_count' => $saved,
                 'current_record' => $saved === 0 ? 'No rows' : $label,
@@ -603,16 +638,22 @@ class GpCopyService
             return null;
         }
 
-        $customer = str_starts_with($externalId, 'partner_') ? substr($externalId, 8) : $externalId;
+        if (($export['resolve_res_id'] ?? '') === 'crm.lead') {
+            $who = str_starts_with($externalId, 'prospect_') ? substr($externalId, 9) : $externalId;
+            $reason = $externalId === '' ? 'No prospect.' : 'Opportunity is not in Odoo.';
+        } else {
+            $who = str_starts_with($externalId, 'partner_') ? substr($externalId, 8) : $externalId;
+            $reason = $externalId === '' ? 'No customer number.' : 'Customer is not in Odoo.';
+        }
         $document = trim((string) csv_value($row['id'] ?? '', 'id'));
         $subject = trim((string) csv_value($row['subject'] ?? $row['name'] ?? '', 'subject'));
 
         return [
             $document,
             (string) csv_value($row['date'] ?? $row['start'] ?? '', 'date'),
-            $customer,
+            $who,
             mb_substr($subject, 0, 180),
-            $externalId === '' ? 'No customer number.' : 'Customer is not in Odoo.',
+            $reason,
         ];
     }
 
@@ -666,6 +707,25 @@ class GpCopyService
     public function problemKey(string $key): string
     {
         return $key.'#problems';
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     * @param  array<string, mixed>  $export
+     * @return array<string, mixed>
+     */
+    private function attachEventCustomer(array $row, array $export): array
+    {
+        $customerKey = trim((string) ($row['customer_key'] ?? ''));
+        unset($row['customer_key']);
+        $customerId = (int) ($export['event_customer_ids'][$customerKey] ?? 0);
+        if ($customerId <= 0) {
+            return $row;
+        }
+        $organizer = trim((string) ($row['partner_ids/.id'] ?? ''));
+        $row['partner_ids/.id'] = $organizer !== '' ? $organizer.','.$customerId : (string) $customerId;
+
+        return $row;
     }
 
     public function lineFrom(array $row, array $headers, array $export): ?array

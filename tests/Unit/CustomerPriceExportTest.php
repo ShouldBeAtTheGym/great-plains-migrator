@@ -34,6 +34,16 @@ class CustomerPriceExportTest extends TestCase
         $inventory = $catalog->find('inventory_on_hand');
         $this->assertStringContainsString("Item_Type) = 'Sales Inventory'", $inventory['sql']);
         $this->assertStringContainsString("Item_Type) = 'Sales Inventory'", $inventory['count_sql']);
+        $this->assertStringContainsString('spvInventoryMultibin', $inventory['sql']);
+        $this->assertStringContainsString('__import__.stock_bin_', $inventory['sql']);
+        $this->assertStringContainsString("'/Stock/', REPLACE(REPLACE(RTRIM(m.Bin), CHAR(13), ''), CHAR(10), '')) AS location_id", $inventory['sql']);
+        $warehouses = $catalog->find('warehouses');
+        $bins = $catalog->find('stock_locations');
+        $this->assertStringContainsString('IV40700', $warehouses['sql']);
+        $this->assertSame('Short Name', $warehouses['fields']['code']);
+        $this->assertStringContainsString('spvBin', $bins['sql']);
+        $this->assertStringContainsString("/Stock') AS location_id", $bins['sql']);
+        $this->assertSame('Bins', $bins['title']);
         $customers = $catalog->find('customers');
         $this->assertStringContainsString("WHEN 'SOUTH CAROLINA' THEN 'SC'", $customers['sql']);
         $this->assertStringContainsString("WHEN 'MARYLAND' THEN 'MD'", $customers['sql']);

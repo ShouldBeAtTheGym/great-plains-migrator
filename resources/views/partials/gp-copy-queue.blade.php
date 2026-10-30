@@ -2,6 +2,8 @@
     $active = $queue['active'] ?? null;
     $failed = $queue['failed'] ?? [];
     $done = (bool) ($queue['done'] ?? false);
+    $focusedItem = collect($queue['steps'] ?? [])->firstWhere('key', $focus ?? '');
+    $stats = ($done && is_array($focusedItem)) ? $focusedItem : (is_array($active) ? $active : []);
     $copying = ($active['status'] ?? '') === 'running';
     $heading = $done
         ? 'Every file is saved in MySQL'
@@ -40,15 +42,15 @@
     <div class="gp-copy-stats">
         <div>
             <span>Records</span>
-            <strong id="gp-copy-total">{{ number_format($active['record_count'] ?? 0) }}</strong>
+            <strong id="gp-copy-total">{{ number_format($stats['record_count'] ?? 0) }}</strong>
         </div>
         <div>
             <span>Processed</span>
-            <strong class="gp-copy-processed" id="gp-copy-done">{{ number_format($active['processed_count'] ?? 0) }}</strong>
+            <strong class="gp-copy-processed" id="gp-copy-done">{{ number_format(($done && is_array($focusedItem)) ? ($focusedItem['saved_count'] ?? 0) : ($active['processed_count'] ?? 0)) }}</strong>
         </div>
         <div class="gp-copy-current">
             <span>Current record</span>
-            <strong id="gp-copy-current">{{ ($active['current_record'] ?? '') !== '' ? $active['current_record'] : '—' }}</strong>
+            <strong id="gp-copy-current">{{ ($stats['current_record'] ?? '') !== '' ? $stats['current_record'] : '—' }}</strong>
         </div>
     </div>
     <ul class="gp-copy-queue" id="gp-copy-queue">
@@ -108,9 +110,10 @@
             root.classList.toggle('is-done', !!finished);
             root.classList.remove('is-failed');
             var shown = active || { record_count: 0, processed_count: 0, current_record: '', percent: 100, title: '' };
-            total.textContent = num(finished ? 0 : shown.record_count);
-            done.textContent = num(finished ? 0 : shown.processed_count);
-            current.textContent = finished ? 'Finished' : (shown.current_record || '—');
+            var focusedStep = focus ? (state.steps || []).find(function (step) { return step.key === focus; }) : null;
+            total.textContent = num(finished && focusedStep ? (focusedStep.record_count || focusedStep.saved_count) : (finished ? 0 : shown.record_count));
+            done.textContent = num(finished && focusedStep ? focusedStep.saved_count : (finished ? 0 : shown.processed_count));
+            current.textContent = (finished && focusedStep) ? (focusedStep.current_record || 'Saved') : (finished ? 'Finished' : (shown.current_record || '—'));
             if (finished || shown.percent === null || shown.percent === undefined) {
                 percent.textContent = finished ? '100%' : '';
                 bar.classList.toggle('is-waiting', !finished && active && (active.status === 'running' || active.status === 'pending' || active.status === 'missing'));

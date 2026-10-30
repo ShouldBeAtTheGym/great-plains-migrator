@@ -67,7 +67,8 @@ class SalespersonLinkTest extends TestCase
         $contacts = $this->actingAs($user)->get(route('salespeople.contacts'));
         $contacts->assertOk();
         $contactCsv = $contacts->streamedContent();
-        $this->assertStringContainsString('salesperson_contact_205,"ALT TRACIE",alt.tracie.205@example.com,person,0,"Geckobrands, LLC"', $contactCsv);
+        $this->assertStringContainsString('salesperson_contact_205,"ALT TRACIE",alt.tracie.205@example.com,"Geckobrands, LLC"', $contactCsv);
+        $this->assertStringNotContainsString('is_company', $contactCsv);
 
         $employees = $this->actingAs($user)->get(route('salespeople.employees'));
         $employees->assertOk();

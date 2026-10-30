@@ -44,16 +44,16 @@ class ExportCatalog
         }
 
         $importCompanyName = trim((string) $company->odoo_import_company_name);
-        if (in_array(($export['key'] ?? ''), ['customers', 'customer_price_lists'], true)
+        if (in_array(($export['key'] ?? ''), ['customers', 'customer_price_lists', 'prospects', 'prospect_contacts'], true)
             && (int) $company->odoo_import_company_id > 0
             && $importCompanyName !== '') {
-            if (($export['key'] ?? '') === 'customers') {
+            if (($export['key'] ?? '') === 'customer_price_lists') {
+                $export['extra']['company_id'] = $importCompanyName;
+                $export['fields']['company_id'] = 'Company';
+            } else {
                 $xmlid = $this->externalId($company, 'res.company', (int) $company->odoo_import_company_id, 'company_'.$company->odoo_import_company_id);
                 $export['extra']['company_id/id'] = $xmlid;
                 $export['fields']['company_id/id'] = 'Company / External ID';
-            } else {
-                $export['extra']['company_id'] = $importCompanyName;
-                $export['fields']['company_id'] = 'Company';
             }
         }
 
@@ -65,7 +65,7 @@ class ExportCatalog
             $export['fields']['warehouse_id'] = 'Warehouse';
         }
 
-        if ($key !== 'stock_locations') {
+        if (! in_array($key, ['stock_locations', 'warehouses'], true)) {
             $export = $this->matchImportedCategories($company, $this->bindItemUserFields($company, $export));
             if ($key === 'inventory_on_hand') {
                 $this->ensureInventoryVariantIds($company);
@@ -407,7 +407,8 @@ class ExportCatalog
 
     public function attachPartnerResIds(Company $company, $connection, array $export): array
     {
-        if (($export['resolve_res_id'] ?? null) !== 'res.partner') {
+        $model = (string) ($export['resolve_res_id'] ?? '');
+        if (! in_array($model, ['res.partner', 'crm.lead'], true)) {
             return $export;
         }
 
@@ -417,7 +418,7 @@ class ExportCatalog
             "SELECT DISTINCT RTRIM(res_id) AS name FROM ({$export['sql']}) AS partner_ids WHERE RTRIM(ISNULL(res_id, '')) <> ''"
         );
         if ($statement === false) {
-            throw new RuntimeException(app(GpConnection::class)->errorText('The customer lookup for CRM notes failed.'));
+            throw new RuntimeException(app(GpConnection::class)->errorText('The lookup for related records failed.'));
         }
 
         $names = [];
@@ -431,7 +432,7 @@ class ExportCatalog
 
         $map = [];
         foreach (array_chunk(array_values($names), 300) as $chunk) {
-            $found = $this->odoo->findExternalIds($company, ['res.partner'], $chunk);
+            $found = $this->odoo->findExternalIds($company, [$model], $chunk);
             foreach ($found as $name => $row) {
                 $id = (int) ($row['res_id'] ?? 0);
                 if ($id > 0) {
@@ -580,6 +581,27 @@ SELECT DISTINCT UPPER(RTRIM(Assigned_To)) AS who
 FROM dbo.spCRMEvent
 WHERE RTRIM(ISNULL(Assigned_To, '')) <> ''
 SQL);
+        $seen = [];
+        foreach ($assigned as $row) {
+            $who = strtoupper(trim((string) ($row['who'] ?? '')));
+            if ($who !== '') {
+                $seen[$who] = true;
+            }
+        }
+        $interactionAssignees = app(GpConnection::class)->rows($connection, <<<'SQL'
+SELECT DISTINCT UPPER(RTRIM(Assigned_To)) AS who
+FROM dbo.spvInteraction
+WHERE Starts_On IS NOT NULL
+  AND Starts_On > '1900-01-02'
+  AND RTRIM(ISNULL(Assigned_To, '')) <> ''
+SQL);
+        foreach ($interactionAssignees as $row) {
+            $who = strtoupper(trim((string) ($row['who'] ?? '')));
+            if ($who !== '' && ! isset($seen[$who])) {
+                $seen[$who] = true;
+                $assigned[] = ['who' => $who];
+            }
+        }
         $userWhen = [];
         $partnerWhen = [];
         foreach ($assigned as $row) {
@@ -605,25 +627,8 @@ SQL);
             ? "CAST('' AS varchar(20))"
             : 'CASE UPPER(RTRIM(ISNULL(e.Assigned_To, \'\'))) '.implode(' ', $partnerWhen)." ELSE '' END";
 
-        $customerKey = "CASE
-            WHEN RTRIM(ISNULL(e.Customer_Num, '')) <> '' THEN CONCAT('partner_', RTRIM(e.Customer_Num))
-            WHEN named.Customer_Num IS NOT NULL THEN CONCAT('partner_', named.Customer_Num)
-            ELSE ''
-        END";
-        $customerIds = $this->eventCustomerIds($company, $connection);
-        $customerWhen = [];
-        foreach ($customerIds as $name => $id) {
-            $safe = str_replace("'", "''", $name);
-            $customerWhen[] = "WHEN '{$safe}' THEN '{$id}'";
-        }
-        $customerSql = $customerWhen === []
-            ? "CAST('' AS varchar(20))"
-            : "CASE {$customerKey} ".implode(' ', $customerWhen)." ELSE '' END";
-        $attendeeSql = "CASE
-            WHEN ({$organizerPartner}) <> '' AND ({$customerSql}) <> '' THEN CONCAT(({$organizerPartner}), ',', ({$customerSql}))
-            WHEN ({$organizerPartner}) <> '' THEN ({$organizerPartner})
-            ELSE ({$customerSql})
-        END";
+        $export['event_customer_ids'] = $this->eventCustomerIds($company, $connection);
+        $attendeeSql = $organizerPartner;
 
         $export['sql'] = str_replace(
             ['[[event_user_id]]', '[[event_attendees]]'],
@@ -632,6 +637,235 @@ SQL);
         );
 
         return $export;
+    }
+
+    public function assignCrmNoteAuthors(Company $company, $connection, array $export): array
+    {
+        if (($export['key'] ?? '') !== 'customer_crm_notes' || ! str_contains((string) ($export['sql'] ?? ''), '[[note_author_id]]')) {
+            return $export;
+        }
+
+        $salespad = app(GpConnection::class)->rows($connection, <<<'SQL'
+SELECT RTRIM(User_Name) AS login, RTRIM(Display_Name) AS display, RTRIM(sales_person_id) AS sp, RTRIM(Email) AS email
+FROM dbo.spvSystemUser
+SQL);
+        $authors = app(GpConnection::class)->rows($connection, <<<'SQL'
+SELECT DISTINCT UPPER(RTRIM(Created_By)) AS who
+FROM dbo.spCRMNote
+WHERE RTRIM(ISNULL(Created_By, '')) <> ''
+SQL);
+        $odooUsers = $this->odoo->execute($company, 'res.users', 'search_read', [[['share', '=', false]]], [
+            'fields' => ['name', 'login', 'email', 'partner_id'],
+            'limit' => 200,
+            'context' => ['active_test' => false],
+        ]);
+        if (! is_array($odooUsers)) {
+            throw new RuntimeException('Odoo did not return its users, so the note authors cannot be matched.');
+        }
+
+        $links = [];
+        if ($company->exists && class_exists(SalespersonLink::class)) {
+            foreach (SalespersonLink::query()->where('company_id', $company->id)->get() as $link) {
+                $gpId = strtoupper(trim((string) $link->gp_id));
+                if ($gpId === '') {
+                    continue;
+                }
+                $match = collect($odooUsers)->first(fn ($user) => is_array($user) && (int) ($user['id'] ?? 0) === (int) $link->odoo_user_id);
+                $partnerId = is_array($match) && is_array($match['partner_id'] ?? null) ? (int) $match['partner_id'][0] : 0;
+                $links[$gpId] = [
+                    'user_id' => (int) $link->odoo_user_id,
+                    'partner_id' => $partnerId,
+                    'name' => is_array($match) ? (string) ($match['name'] ?? '') : '',
+                ];
+            }
+        }
+
+        $createdBy = [];
+        foreach ($authors as $row) {
+            $who = strtoupper(trim((string) ($row['who'] ?? '')));
+            if ($who !== '') {
+                $createdBy[] = $who;
+            }
+        }
+
+        $export['sql'] = str_replace(
+            '[[note_author_id]]',
+            $this->noteAuthorSql($createdBy, $salespad, $odooUsers, $links, $this->noteAuthorPartners($company, $salespad)),
+            $export['sql']
+        );
+
+        return $export;
+    }
+
+    public function assignCrmInteractionAuthors(Company $company, $connection, array $export): array
+    {
+        if (($export['key'] ?? '') !== 'customer_interactions' || ! str_contains((string) ($export['sql'] ?? ''), '[[interaction_author_id]]')) {
+            return $export;
+        }
+
+        $salespad = app(GpConnection::class)->rows($connection, <<<'SQL'
+SELECT RTRIM(User_Name) AS login, RTRIM(Display_Name) AS display, RTRIM(sales_person_id) AS sp, RTRIM(Email) AS email
+FROM dbo.spvSystemUser
+SQL);
+        $people = app(GpConnection::class)->rows($connection, <<<'SQL'
+SELECT DISTINCT UPPER(RTRIM(Assigned_To)) AS assigned, UPPER(RTRIM(Created_By)) AS created
+FROM dbo.spvCustomerInteraction
+WHERE RTRIM(ISNULL(Customer_Num, '')) <> ''
+SQL);
+        $odooUsers = $this->odoo->execute($company, 'res.users', 'search_read', [[['share', '=', false]]], [
+            'fields' => ['name', 'login', 'email', 'partner_id'],
+            'limit' => 200,
+            'context' => ['active_test' => false],
+        ]);
+        if (! is_array($odooUsers)) {
+            throw new RuntimeException('Odoo did not return its users, so the interaction authors cannot be matched.');
+        }
+
+        $links = [];
+        if ($company->exists && class_exists(SalespersonLink::class)) {
+            foreach (SalespersonLink::query()->where('company_id', $company->id)->get() as $link) {
+                $gpId = strtoupper(trim((string) $link->gp_id));
+                if ($gpId === '') {
+                    continue;
+                }
+                $match = collect($odooUsers)->first(fn ($user) => is_array($user) && (int) ($user['id'] ?? 0) === (int) $link->odoo_user_id);
+                $partnerId = is_array($match) && is_array($match['partner_id'] ?? null) ? (int) $match['partner_id'][0] : 0;
+                $links[$gpId] = [
+                    'user_id' => (int) $link->odoo_user_id,
+                    'partner_id' => $partnerId,
+                    'name' => is_array($match) ? (string) ($match['name'] ?? '') : '',
+                ];
+            }
+        }
+
+        $assigned = [];
+        $created = [];
+        foreach ($people as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $who = strtoupper(trim((string) ($row['assigned'] ?? '')));
+            $by = strtoupper(trim((string) ($row['created'] ?? '')));
+            if ($who !== '') {
+                $assigned[$who] = $who;
+            }
+            if ($by !== '') {
+                $created[$by] = $by;
+            }
+        }
+
+        $partners = $this->noteAuthorPartners($company, $salespad);
+        $assignedSql = $this->noteAuthorSql(array_values($assigned), $salespad, $odooUsers, $links, $partners, 'i.Assigned_To');
+        $createdSql = $this->noteAuthorSql(array_values($created), $salespad, $odooUsers, $links, $partners, 'i.Created_By');
+        $export['sql'] = str_replace(
+            '[[interaction_author_id]]',
+            "CASE WHEN ({$assignedSql}) <> '' THEN ({$assignedSql}) ELSE ({$createdSql}) END",
+            $export['sql']
+        );
+
+        return $export;
+    }
+
+    public function noteAuthorSql(array $createdBy, array $salespadUsers, array $odooUsers, array $links, array $partnersByName = [], string $column = 'n.Created_By'): string
+    {
+        $byLogin = [];
+        $byCompact = [];
+        foreach ($salespadUsers as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $login = strtoupper(trim((string) ($row['login'] ?? '')));
+            if ($login === '') {
+                continue;
+            }
+            $byLogin[$login] = $row;
+            $compact = preg_replace('/[^A-Z0-9]/', '', $login) ?? '';
+            if ($compact !== '' && ! isset($byCompact[$compact])) {
+                $byCompact[$compact] = $row;
+            }
+        }
+
+        $when = [];
+        foreach ($createdBy as $who) {
+            $who = strtoupper(trim((string) $who));
+            if ($who === '') {
+                continue;
+            }
+            $compact = preg_replace('/[^A-Z0-9]/', '', $who) ?? '';
+            $salespadUser = $byLogin[$who] ?? ($compact !== '' ? ($byCompact[$compact] ?? null) : null);
+            $match = $this->matchEventAssignee($who, is_array($salespadUser) ? $salespadUser : null, $odooUsers, $links);
+            $partnerId = (int) ($match['partner_id'] ?? 0);
+            if ($partnerId <= 0 && is_array($salespadUser)) {
+                $display = strtoupper(trim((string) ($salespadUser['display'] ?? '')));
+                $partnerId = (int) ($partnersByName[$display] ?? 0);
+            }
+            if ($partnerId <= 0) {
+                continue;
+            }
+            $safe = str_replace("'", "''", $who);
+            $when[$who] = "WHEN '{$safe}' THEN '".$partnerId."'";
+        }
+        ksort($when);
+        if ($when === []) {
+            return "CAST('' AS varchar(20))";
+        }
+
+        $column = in_array($column, ['n.Created_By', 'i.Assigned_To', 'i.Created_By'], true)
+            ? $column
+            : 'n.Created_By';
+
+        return "CASE UPPER(RTRIM(ISNULL({$column}, ''))) ".implode(' ', $when)." ELSE '' END";
+    }
+
+    private function noteAuthorPartners(Company $company, array $salespadUsers): array
+    {
+        $names = [];
+        foreach ($salespadUsers as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $display = trim((string) ($row['display'] ?? ''));
+            if (! str_contains($display, ' ')) {
+                continue;
+            }
+            $names[$display] = $display;
+        }
+        if ($names === []) {
+            return [];
+        }
+
+        try {
+            $rows = $this->odoo->execute($company, 'res.partner', 'search_read', [[
+                ['name', 'in', array_values($names)],
+            ]], [
+                'fields' => ['name', 'email'],
+                'limit' => 500,
+                'context' => ['active_test' => false],
+            ]);
+        } catch (RuntimeException) {
+            return [];
+        }
+
+        $chosen = [];
+        foreach (is_array($rows) ? $rows : [] as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $email = strtolower(trim((string) ($row['email'] ?? '')));
+            if (! str_contains($email, '@howies')) {
+                continue;
+            }
+            $name = strtoupper(trim((string) ($row['name'] ?? '')));
+            $id = (int) ($row['id'] ?? 0);
+            if ($name === '' || $id <= 0) {
+                continue;
+            }
+            if (! isset($chosen[$name]) || $id < $chosen[$name]) {
+                $chosen[$name] = $id;
+            }
+        }
+
+        return $chosen;
     }
 
     public function matchEventAssignee(string $assignedTo, ?array $salespadUser, array $odooUsers, array $links): ?array
@@ -738,6 +972,21 @@ SQL);
                 $names[$name] = $name;
             }
         }
+        $interactionCustomers = app(GpConnection::class)->rows($connection, <<<'SQL'
+SELECT DISTINCT CONCAT('partner_', RTRIM(l.Customer_Num)) AS name
+FROM dbo.spvCustomerInteractionLink AS l
+INNER JOIN dbo.spvInteraction AS i
+    ON i.Interaction_ID = l.Interaction_ID
+WHERE i.Starts_On IS NOT NULL
+  AND i.Starts_On > '1900-01-02'
+  AND RTRIM(ISNULL(l.Customer_Num, '')) <> ''
+SQL);
+        foreach ($interactionCustomers as $row) {
+            $name = trim((string) ($row['name'] ?? ''));
+            if ($name !== '') {
+                $names[$name] = $name;
+            }
+        }
         if ($names === []) {
             return [];
         }
@@ -807,7 +1056,7 @@ SQL);
     private function applySalesperson(Company $company, array $export, string $key): array
     {
         $sql = (string) ($export['sql'] ?? '');
-        if (! preg_match('/RTRIM\((c\.Sales_Person_ID|h\.SLPRSNID)\) AS gp_salesperson/', $sql)) {
+        if (! preg_match('/RTRIM\((c\.Sales_Person_ID|h\.SLPRSNID|p\.Sales_Person_ID)\) AS gp_salesperson/', $sql)) {
             return $export;
         }
 
@@ -815,7 +1064,7 @@ SQL);
             ? 'invoice_user_id/id'
             : 'user_id/id';
         $export['sql'] = preg_replace_callback(
-            '/RTRIM\((c\.Sales_Person_ID|h\.SLPRSNID)\) AS gp_salesperson/',
+            '/RTRIM\((c\.Sales_Person_ID|h\.SLPRSNID|p\.Sales_Person_ID)\) AS gp_salesperson/',
             fn (array $match) => $this->salespersonCase($company, $match[1]).' AS ['.$column.']',
             $sql
         );

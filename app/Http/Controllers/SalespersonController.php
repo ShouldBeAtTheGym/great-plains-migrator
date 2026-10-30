@@ -58,14 +58,12 @@ class SalespersonController extends Controller
         }
 
         return $this->csv('odoo_salesperson_contacts_'.date('Ymd').'.csv', function ($out) use ($prepared) {
-            fputcsv($out, ['id', 'name', 'email', 'company_type', 'is_company', $prepared['company_column']]);
+            fputcsv($out, ['id', 'name', 'email', $prepared['company_column']]);
             foreach ($prepared['rows'] as $row) {
                 fputcsv($out, [
                     $row['contact_id'],
                     $row['name'],
                     $row['login'],
-                    'person',
-                    '0',
                     $prepared['company_value'],
                 ]);
             }

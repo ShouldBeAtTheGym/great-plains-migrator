@@ -9,7 +9,6 @@ use App\Services\ExportCatalog;
 use App\Services\GpConnection;
 use App\Services\GpCopyService;
 use App\Services\OdooClient;
-use App\Services\OdooImporter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -47,7 +46,7 @@ class StepController extends Controller
                     $savedCount = $copy['saved_count'];
                     $sample = $count > 0 && $count < 5000 ? $copies->sample($company, $key, 3) : [];
                     $this->loadProblems($gp, $company, $export, $problemCount, $problems);
-                    if ($problemCount === null && str_starts_with($key, 'customer_crm_')) {
+                    if ($problemCount === null && $this->keepsCustomerProblems($key)) {
                         [$problemCount, $problems] = $copies->storedProblems($company, $key);
                     }
                 } else {
@@ -140,19 +139,6 @@ class StepController extends Controller
         return response()->json($copies->snapshot($company, $key));
     }
 
-    public function apiImport(Request $request, string $key, OdooImporter $importer): JsonResponse
-    {
-        @set_time_limit(180);
-        $company = Company::current();
-        $step = $this->step($company, $key);
-        $current = ConversionStep::currentFor($company);
-        if (! $step->isComplete() && (! $current || $current->id !== $step->id)) {
-            abort(403, 'This file opens when it is the current step.');
-        }
-
-        return response()->json($importer->nextBatch($company, $key, $request->boolean('restart')));
-    }
-
     public function download(string $key, ExportCatalog $catalog, GpCopyService $copies, ?int $part = null): StreamedResponse|RedirectResponse
     {
         $company = Company::current();
@@ -165,7 +151,8 @@ class StepController extends Controller
         $export = $this->export($catalog, $key);
         $step = $this->step($company, $key);
         $current = ConversionStep::currentFor($company);
-        if (! $step->isComplete() && (! $current || $current->id !== $step->id)) {
+        $copyReady = $copies->snapshot($company, $key)['status'] === 'complete';
+        if (! $step->isComplete() && (! $current || $current->id !== $step->id) && ! $copyReady) {
             abort(403, 'This file opens when it is the current step.');
         }
 
@@ -266,7 +253,7 @@ class StepController extends Controller
         $company = Company::current();
         $export = $this->export($catalog, $key);
         $this->step($company, $key);
-        if (empty($export['problem_sql']) && str_starts_with($key, 'customer_crm_')) {
+        if (empty($export['problem_sql']) && $this->keepsCustomerProblems($key)) {
             $name = 'odoo18_'.$key.'_left_out.csv';
 
             return response()->streamDownload(function () use ($copies, $company, $key) {
@@ -399,6 +386,11 @@ class StepController extends Controller
         abort_unless($current && $current->id === $step->id, 403);
 
         return $step;
+    }
+
+    private function keepsCustomerProblems(string $key): bool
+    {
+        return str_starts_with($key, 'customer_crm_') || $key === 'customer_interactions' || $key === 'prospect_interactions';
     }
 
     private function loadProblems(GpConnection $gp, Company $company, array $export, ?int &$problemCount, array &$problems): void

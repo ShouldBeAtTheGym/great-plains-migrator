@@ -14,6 +14,7 @@ function export_catalog(): array
     $catalog = array_merge(
         setup_exports(),
         partner_exports(),
+        prospect_exports(),
         [$products[0]],
         customer_price_exports(),
         array_slice($products, 1),
@@ -25,7 +26,7 @@ function export_catalog(): array
 
 function country_code_sql(string $expr): string
 {
-    return "CASE UPPER(RTRIM($expr))
+    $sql = "CASE UPPER(RTRIM($expr))
         WHEN '' THEN 'US'
         WHEN 'UNITED STATES' THEN 'US'
         WHEN 'US' THEN 'US'
@@ -103,12 +104,33 @@ function country_code_sql(string $expr): string
         WHEN 'FIJI' THEN 'FJ'
         ELSE ''
     END";
+    $xmlids = [
+        'AE' => 'base.ae', 'AF' => 'base.af', 'AG' => 'base.ag', 'AR' => 'base.ar', 'AT' => 'base.at',
+        'AU' => 'base.au', 'AW' => 'base.aw', 'BB' => 'base.bb', 'BH' => 'base.bh', 'BL' => 'base.bl',
+        'BM' => 'base.bm', 'BQ' => 'base.bq', 'BS' => 'base.bs', 'BZ' => 'base.bz', 'CA' => 'base.ca',
+        'CH' => 'base.ch', 'CK' => 'base.ck', 'CL' => 'base.cl', 'CN' => 'base.cn', 'CO' => 'base.co',
+        'CR' => 'base.cr', 'CW' => 'base.cw', 'DE' => 'base.de', 'DK' => 'base.dk', 'DM' => 'base.dm',
+        'DO' => 'base.do', 'ES' => 'base.es', 'FI' => 'base.fi', 'FJ' => 'base.fj', 'FM' => 'base.fm',
+        'FR' => 'base.fr', 'GB' => 'base.uk', 'GD' => 'base.gd', 'GT' => 'base.gt', 'HN' => 'base.hn',
+        'HT' => 'base.ht', 'ID' => 'base.id', 'IE' => 'base.ie', 'IL' => 'base.il', 'JM' => 'base.jm',
+        'JP' => 'base.jp', 'KR' => 'base.kr', 'KW' => 'base.kw', 'KY' => 'base.ky', 'MF' => 'base.mf',
+        'MO' => 'base.mo', 'MX' => 'base.mx', 'NL' => 'base.nl', 'OM' => 'base.om', 'PA' => 'base.pa',
+        'PE' => 'base.pe', 'PH' => 'base.ph', 'PR' => 'base.pr', 'PW' => 'base.pw', 'RU' => 'base.ru',
+        'SR' => 'base.sr', 'SV' => 'base.sv', 'SX' => 'base.sx', 'TC' => 'base.tc', 'TF' => 'base.tf',
+        'TT' => 'base.tt', 'UM' => 'base.um', 'US' => 'base.us', 'VE' => 'base.ve', 'VG' => 'base.vg',
+        'VI' => 'base.vi', 'VU' => 'base.vu', 'ZA' => 'base.za',
+    ];
+    foreach ($xmlids as $code => $xmlid) {
+        $sql = str_replace("THEN '{$code}'", "THEN '{$xmlid}'", $sql);
+    }
+
+    return $sql;
 }
 
 function payment_term_id_sql(string $expr): string
 {
     $term = 'UPPER(RTRIM('.$expr.'))';
-    foreach ([' ', '%', '/', '(', ')', '.', ',', '#', ':'] as $char) {
+    foreach ([' ', '%', '/', '(', ')', ',', '#', ':'] as $char) {
         $term = "REPLACE({$term}, '{$char}', '_')";
     }
 
@@ -143,6 +165,39 @@ function state_code_sql(string $expr): string
     return $sql." ELSE {$value} END";
 }
 
+function state_xmlid_sql(string $expr): string
+{
+    $code = state_code_sql($expr);
+    $map = [
+        'AA' => 'base.state_us_aa', 'AE' => 'base.state_us_ae', 'AK' => 'base.state_us_2', 'AL' => 'base.state_us_1',
+        'AP' => 'base.state_us_ap', 'AR' => 'base.state_us_4', 'AS' => 'base.state_us_as', 'AZ' => 'base.state_us_3',
+        'CA' => 'base.state_us_5', 'CO' => 'base.state_us_6', 'CT' => 'base.state_us_7', 'DC' => 'base.state_us_9',
+        'DE' => 'base.state_us_8', 'FL' => 'base.state_us_10', 'FM' => 'base.state_us_fm', 'GA' => 'base.state_us_11',
+        'GU' => 'base.state_us_gu', 'HI' => 'base.state_us_12', 'IA' => 'base.state_us_16', 'ID' => 'base.state_us_13',
+        'IL' => 'base.state_us_14', 'IN' => 'base.state_us_15', 'KS' => 'base.state_us_17', 'KY' => 'base.state_us_18',
+        'LA' => 'base.state_us_19', 'MA' => 'base.state_us_34', 'MD' => 'base.state_us_33', 'ME' => 'base.state_us_20',
+        'MH' => 'base.state_us_mh', 'MI' => 'base.state_us_35', 'MN' => 'base.state_us_36', 'MO' => 'base.state_us_38',
+        'MP' => 'base.state_us_mp', 'MS' => 'base.state_us_37', 'MT' => 'base.state_us_21', 'NC' => 'base.state_us_28',
+        'ND' => 'base.state_us_29', 'NE' => 'base.state_us_22', 'NH' => 'base.state_us_24', 'NJ' => 'base.state_us_25',
+        'NM' => 'base.state_us_26', 'NV' => 'base.state_us_23', 'NY' => 'base.state_us_27', 'OH' => 'base.state_us_30',
+        'OK' => 'base.state_us_31', 'OR' => 'base.state_us_32', 'PA' => 'base.state_us_39', 'PR' => 'base.state_us_pr',
+        'PW' => 'base.state_us_pw', 'RI' => 'base.state_us_40', 'SC' => 'base.state_us_41', 'SD' => 'base.state_us_42',
+        'TN' => 'base.state_us_43', 'TX' => 'base.state_us_44', 'UT' => 'base.state_us_45', 'VA' => 'base.state_us_47',
+        'VI' => 'base.state_us_vi', 'VT' => 'base.state_us_46', 'WA' => 'base.state_us_48', 'WI' => 'base.state_us_50',
+        'WV' => 'base.state_us_49', 'WY' => 'base.state_us_51',
+        'AB' => 'base.state_ca_ab', 'BC' => 'base.state_ca_bc', 'MB' => 'base.state_ca_mb', 'NB' => 'base.state_ca_nb',
+        'NL' => 'base.state_ca_nl', 'NS' => 'base.state_ca_ns', 'NT' => 'base.state_ca_nt', 'NU' => 'base.state_ca_nu',
+        'ON' => 'base.state_ca_on', 'PE' => 'base.state_ca_pe', 'QC' => 'base.state_ca_qc', 'SK' => 'base.state_ca_sk',
+        'YT' => 'base.state_ca_yt',
+    ];
+    $sql = "CASE {$code}";
+    foreach ($map as $state => $xmlid) {
+        $sql .= " WHEN '{$state}' THEN '{$xmlid}'";
+    }
+
+    return $sql." ELSE '' END";
+}
+
 function currency_id_sql(string $expr): string
 {
     return "CASE RTRIM($expr)
@@ -156,6 +211,16 @@ function crm_html_sql(string $expr): string
     $text = 'CAST('.$expr.' AS varchar(max))';
 
     return "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE({$text}, '&', '&amp;'), '<', '&lt;'), '>', '&gt;'), CHAR(13), ''), CHAR(10), '<br>')";
+}
+
+function prospect_note_html_sql(string $expr): string
+{
+    $text = 'CAST('.$expr.' AS nvarchar(max))';
+    $text = "REPLACE(REPLACE(REPLACE({$text}, '&', '&amp;'), '<', '&lt;'), '>', '&gt;')";
+    $text = "REPLACE({$text}, CHAR(13) + CHAR(10), '<br>')";
+    $text = "REPLACE({$text}, CHAR(10), '<br>')";
+
+    return "REPLACE({$text}, CHAR(13), '<br>')";
 }
 
 function gp_text_sql(string $expr): string
@@ -347,25 +412,73 @@ WHERE u.uom <> '' AND u.uom <> 'EA'
 SQL,
         ],
         [
+            'key' => 'warehouses',
+            'group' => 'Import first',
+            'title' => 'Warehouses',
+            'detail' => 'Upload this file first, before the bins. One Odoo warehouse per Great Plains site. The short name is the site code, such as US or CA. Odoo creates the stock location for each warehouse, named with the short name and /Stock, such as US/Stock.',
+            'before' => [
+                'Open Inventory → Configuration → Warehouses. The gear menu on that list has Import records. Upload this warehouse file, not the bins file.',
+                'On name, choose Warehouse. On code, choose Short Name. On company_id/id, choose Company / External ID. If Company is not in the list, set company_id/id to Do not import. Odoo fills in the company.',
+            ],
+            'hint' => 'Warehouses is under Inventory → Configuration → Warehouses.',
+            'odoo' => 'Warehouses',
+            'file' => 'odoo18_warehouses.csv',
+            'fields' => [
+                'id' => 'External ID',
+                'name' => 'Warehouse',
+                'code' => 'Short Name',
+                'company_id/id' => 'Company / External ID',
+            ],
+            'count_sql' => "SELECT COUNT(*) AS c FROM dbo.IV40700 WHERE RTRIM(LOCNCODE) <> ''",
+            'sql' => <<<'SQL'
+SELECT
+    CONCAT('warehouse_', RTRIM(LOCNCODE)) AS id,
+    COALESCE(NULLIF(RTRIM(LOCNDSCR), ''), RTRIM(LOCNCODE)) AS name,
+    RTRIM(LOCNCODE) AS code
+FROM dbo.IV40700
+WHERE RTRIM(LOCNCODE) <> ''
+SQL,
+        ],
+        [
             'key' => 'stock_locations',
             'group' => 'Import first',
-            'title' => 'Warehouse locations',
-            'detail' => 'One internal location per GP site, named with the GP site code. Import this before inventory on hand.',
+            'title' => 'Bins',
+            'detail' => 'One internal location per SalesPad bin. The parent is that site’s warehouse stock location, such as US/Stock. Import the warehouses first so those stock locations exist.',
+            'before' => [
+                'Import the warehouses first. A bin whose parent is US/Stock needs the US warehouse to exist.',
+            ],
             'hint' => 'Locations stays hidden until Storage Locations is on. Go to Inventory → Configuration → Settings. Under Warehouse, check Storage Locations. Click Save. Then open Inventory → Configuration → Locations. It is listed with Warehouses and Operations Types.',
             'odoo' => 'Locations',
             'file' => 'odoo18_stock_locations.csv',
-            'count_sql' => "SELECT COUNT(*) AS c FROM (SELECT DISTINCT LOCNCODE FROM dbo.IV00102 WHERE RTRIM(LOCNCODE) <> '') AS sites",
+            'fields' => [
+                'id' => 'External ID',
+                'name' => 'Location Name',
+                'location_id' => 'Parent Location',
+                'usage' => 'Location Type',
+                'barcode' => 'Barcode',
+                'company_id/id' => 'Company / External ID',
+            ],
+            'count_sql' => <<<'SQL'
+SELECT COUNT(*) AS c
+FROM (
+    SELECT DISTINCT RTRIM(Location) AS location, REPLACE(REPLACE(RTRIM(Bin), CHAR(13), ''), CHAR(10), '') AS bin
+    FROM dbo.spvBin
+    WHERE RTRIM(Location) <> ''
+      AND RTRIM(Location) <> 'LOCNCODE'
+      AND REPLACE(REPLACE(RTRIM(Bin), CHAR(13), ''), CHAR(10), '') <> ''
+) AS bins
+SQL,
             'sql' => <<<'SQL'
 SELECT DISTINCT
-    CONCAT('stock_location_', RTRIM(LOCNCODE)) AS id,
-    RTRIM(LOCNCODE) AS name,
+    CONCAT('stock_bin_', RTRIM(Location), '_', REPLACE(REPLACE(REPLACE(RTRIM(Bin), CHAR(13), ''), CHAR(10), ''), ' ', '_')) AS id,
+    REPLACE(REPLACE(RTRIM(Bin), CHAR(13), ''), CHAR(10), '') AS name,
+    CONCAT(RTRIM(Location), '/Stock') AS location_id,
     'internal' AS usage,
-    RTRIM(LOCNCODE) AS barcode,
-    1 AS replenish_location,
-    90 AS cyclic_inventory_frequency,
-    'stock.removal_least_packages' AS [removal_strategy_id/id]
-FROM dbo.IV00102
-WHERE RTRIM(LOCNCODE) <> ''
+    CONCAT(RTRIM(Location), '-', REPLACE(REPLACE(RTRIM(Bin), CHAR(13), ''), CHAR(10), '')) AS barcode
+FROM dbo.spvBin
+WHERE RTRIM(Location) <> ''
+  AND RTRIM(Location) <> 'LOCNCODE'
+  AND REPLACE(REPLACE(RTRIM(Bin), CHAR(13), ''), CHAR(10), '') <> ''
 SQL,
         ],
     ];
@@ -392,10 +505,309 @@ function salespad_customer_columns(): string
     }
 }
 
+function prospect_person_sql(string $alias, bool $html = false): string
+{
+    $part = function (string $column) use ($alias, $html): string {
+        $expr = $alias.'.'.$column;
+
+        return $html ? crm_html_sql($expr) : 'RTRIM(ISNULL('.$expr.", ''))";
+    };
+
+    return "LTRIM(RTRIM(CONCAT(
+        ".$part('First_Name').",
+        CASE WHEN RTRIM(ISNULL({$alias}.Middle_Name, '')) = '' THEN '' ELSE CONCAT(' ', ".$part('Middle_Name').") END,
+        CASE WHEN RTRIM(ISNULL({$alias}.Last_Name, '')) = '' THEN '' ELSE CONCAT(' ', ".$part('Last_Name').") END
+    )))";
+}
+
+function prospect_phone_sql(string $alias): string
+{
+    return "COALESCE(NULLIF(RTRIM({$alias}.Phone_1), ''), NULLIF(RTRIM({$alias}.Phone_2), ''), NULLIF(RTRIM({$alias}.Phone_3), ''), '')";
+}
+
+function prospect_country_sql(string $nameExpr, string $codeExpr): string
+{
+    $fromName = country_code_sql($nameExpr);
+    $codes = [
+        'US' => 'base.us', 'CA' => 'base.ca', 'GB' => 'base.uk', 'UK' => 'base.uk',
+        'SK' => 'base.sk', 'PL' => 'base.pl', 'CH' => 'base.ch', 'UA' => 'base.ua',
+        'DE' => 'base.de', 'FR' => 'base.fr', 'SE' => 'base.se', 'NO' => 'base.no',
+        'UY' => 'base.uy', 'JP' => 'base.jp', 'CZ' => 'base.cz', 'KZ' => 'base.kz',
+        'BY' => 'base.by', 'NL' => 'base.nl', 'MX' => 'base.mx', 'AU' => 'base.au',
+        'RU' => 'base.ru', 'AT' => 'base.at', 'ES' => 'base.es', 'FI' => 'base.fi',
+        'IE' => 'base.ie', 'IT' => 'base.it', 'BE' => 'base.be', 'DK' => 'base.dk',
+        'PR' => 'base.pr',
+    ];
+    $sql = 'CASE UPPER(RTRIM('.$codeExpr.'))';
+    foreach ($codes as $code => $xmlid) {
+        $sql .= " WHEN '{$code}' THEN '{$xmlid}'";
+    }
+
+    return "COALESCE(NULLIF({$fromName}, ''), {$sql} ELSE '' END)";
+}
+
+function prospect_exports(): array
+{
+    $open = "p.xLast_Contacted >= '2026-01-01' AND ISNULL(p.Historical, 0) = 0";
+    $person = prospect_person_sql('ct');
+    $phone = prospect_phone_sql('ct');
+    $country = prospect_country_sql('ct.Country', 'ct.Country_Code');
+    $state = state_xmlid_sql('ct.State');
+    $contactCountry = prospect_country_sql('c.Country', 'c.Country_Code');
+    $contactState = state_xmlid_sql('c.State');
+    $contactPerson = prospect_person_sql('c');
+    $contactPhone = prospect_phone_sql('c');
+    $number = crm_html_sql('p.Prospect_Number');
+    $class = crm_html_sql('p.xClass');
+    $subclass = crm_html_sql('p.xSubClass');
+    $price = crm_html_sql('p.xPrice_Level');
+    $territory = crm_html_sql('p.Sales_Territory');
+    $customer = crm_html_sql('p.Customer_Num');
+    $otherName = prospect_person_sql('other', true);
+    $otherTitle = crm_html_sql('other.xTitle');
+    $otherEmail = crm_html_sql('other.Email_Address');
+    $otherPhone = crm_html_sql(prospect_phone_sql('other'));
+    $interactionType = crm_html_sql('i.Interaction_Type');
+    $interactionSubject = crm_html_sql('i.Subject');
+    $interactionWho = crm_html_sql('i.Assigned_To');
+    $interactionContact = crm_html_sql('i.Contact_Person');
+    $interactionNotes = prospect_note_html_sql('i.Notes');
+    $prospectName = crm_html_sql('p.Prospect_Name');
+    $phone2 = crm_html_sql('c.Phone_2');
+    $phone3 = crm_html_sql('c.Phone_3');
+
+    return [
+        [
+            'key' => 'prospects',
+            'group' => 'Prospects',
+            'title' => 'Prospects',
+            'detail' => 'SalesPad prospects contacted on or after January 1, 2026 that are not historical. Each row is an Odoo opportunity. The contact, email, phone, and address come from spvProspectContact. When a prospect has several contacts, the one with an email is used, and the others are listed in Notes. Import prospect interactions after this file. Columns that start with gp_ are reference only.',
+            'before' => [
+                'Match salespeople first. A salesperson that is not matched is left blank on the opportunity.',
+                'Open CRM → Pipeline. The gear menu on that list has Import records.',
+                'On type, choose Type. The value opportunity is Opportunity. On user_id/id, choose Salesperson / External ID. On description, choose Notes. On state_id/id, choose State / External ID. On country_id/id, choose Country / External ID. Set every gp_ column to Do not import.',
+                'Import the prospect contacts file on Contacts if you want each person as their own contact. Import prospect interactions after these opportunities are in Odoo.',
+            ],
+            'hint' => 'CRM → Pipeline. Import records is on that list.',
+            'fields' => [
+                'id' => 'External ID',
+                'name' => 'Opportunity',
+                'partner_name' => 'Company Name',
+                'contact_name' => 'Contact Name',
+                'email_from' => 'Email',
+                'phone' => 'Phone',
+                'function' => 'Job Position',
+                'street' => 'Street',
+                'city' => 'City',
+                'zip' => 'Zip',
+                'state_id/id' => 'State / External ID',
+                'country_id/id' => 'Country / External ID',
+                'website' => 'Website',
+                'type' => 'Type',
+                'description' => 'Notes',
+                'gp_prospect_number' => 'Do not import',
+                'gp_last_contacted' => 'Do not import',
+                'gp_class' => 'Do not import',
+                'gp_subclass' => 'Do not import',
+                'gp_price_level' => 'Do not import',
+                'gp_customer_number' => 'Do not import',
+            ],
+            'odoo' => 'CRM, opportunity',
+            'file' => 'odoo18_prospects.csv',
+            'count_sql' => "SELECT COUNT(*) AS c FROM dbo.spvProspect AS p WHERE {$open}",
+            'sql' => <<<SQL
+SELECT
+    CONCAT('prospect_', p.Prospect_ID) AS id,
+    COALESCE(NULLIF(RTRIM(p.Prospect_Name), ''), NULLIF(RTRIM(p.Prospect_Number), ''), CONCAT('Prospect ', p.Prospect_ID)) AS name,
+    COALESCE(NULLIF(RTRIM(p.Prospect_Name), ''), NULLIF(RTRIM(p.Prospect_Number), ''), CONCAT('Prospect ', p.Prospect_ID)) AS partner_name,
+    {$person} AS contact_name,
+    RTRIM(ct.Email_Address) AS email_from,
+    {$phone} AS phone,
+    RTRIM(ct.xTitle) AS [function],
+    RTRIM(ct.Address) AS street,
+    RTRIM(ct.City) AS city,
+    RTRIM(ct.Zip) AS zip,
+    {$state} AS [state_id/id],
+    {$country} AS [country_id/id],
+    RTRIM(p.Website) AS website,
+    'opportunity' AS [type],
+    RTRIM(p.Sales_Person_ID) AS gp_salesperson,
+    CONCAT(
+        '<p>',
+        'Prospect ', {$number},
+        CASE WHEN RTRIM(ISNULL(p.xClass, '')) = '' THEN '' ELSE CONCAT('<br>Class: ', {$class}) END,
+        CASE WHEN RTRIM(ISNULL(p.xSubClass, '')) = '' THEN '' ELSE CONCAT('<br>Subclass: ', {$subclass}) END,
+        CASE WHEN RTRIM(ISNULL(p.xPrice_Level, '')) = '' THEN '' ELSE CONCAT('<br>Price level: ', {$price}) END,
+        CASE WHEN RTRIM(ISNULL(p.Sales_Territory, '')) = '' THEN '' ELSE CONCAT('<br>Territory: ', {$territory}) END,
+        CASE WHEN p.xLast_Contacted IS NULL THEN '' ELSE CONCAT('<br>Last contacted ', CONVERT(varchar(10), p.xLast_Contacted, 23)) END,
+        CASE WHEN RTRIM(ISNULL(p.Customer_Num, '')) = '' THEN '' ELSE CONCAT('<br>Customer ', {$customer}) END,
+        CASE WHEN ct.Do_Not_Email = 1 THEN '<br>Do not email' ELSE '' END,
+        CASE WHEN ct.Do_Not_Call_1 = 1 THEN '<br>Do not call' ELSE '' END,
+        '</p>',
+        CASE WHEN NULLIF(oc.other_contacts, '') IS NULL THEN '' ELSE CONCAT('<p><strong>Other contacts</strong>', oc.other_contacts, '</p>') END
+    ) AS description,
+    RTRIM(p.Prospect_Number) AS gp_prospect_number,
+    CONVERT(varchar(10), p.xLast_Contacted, 23) AS gp_last_contacted,
+    RTRIM(p.xClass) AS gp_class,
+    RTRIM(p.xSubClass) AS gp_subclass,
+    RTRIM(p.xPrice_Level) AS gp_price_level,
+    RTRIM(p.Customer_Num) AS gp_customer_number
+FROM dbo.spvProspect AS p
+OUTER APPLY (
+    SELECT TOP 1 ct.*
+    FROM dbo.spvProspectContact AS ct
+    WHERE ct.Prospect_ID = p.Prospect_ID
+    ORDER BY
+        CASE WHEN NULLIF(RTRIM(ct.Email_Address), '') IS NULL THEN 1 ELSE 0 END,
+        ct.Contact_ID
+) AS ct
+OUTER APPLY (
+    SELECT (
+        SELECT CONCAT(
+            '<br>',
+            {$otherName},
+            CASE WHEN RTRIM(ISNULL(other.xTitle, '')) = '' THEN '' ELSE CONCAT(' · ', {$otherTitle}) END,
+            CASE WHEN RTRIM(ISNULL(other.Email_Address, '')) = '' THEN '' ELSE CONCAT(' · ', {$otherEmail}) END,
+            CASE WHEN {$otherPhone} = '' THEN '' ELSE CONCAT(' · ', {$otherPhone}) END
+        )
+        FROM dbo.spvProspectContact AS other
+        WHERE other.Prospect_ID = p.Prospect_ID
+          AND (ct.Contact_ID IS NULL OR other.Contact_ID <> ct.Contact_ID)
+        ORDER BY other.Contact_ID
+        FOR XML PATH(''), TYPE
+    ).value('.', 'nvarchar(max)') AS other_contacts
+) AS oc
+WHERE {$open}
+SQL,
+        ],
+        [
+            'key' => 'prospect_contacts',
+            'group' => 'Prospects',
+            'title' => 'Prospect contacts',
+            'detail' => 'People on the prospects contacted on or after January 1, 2026 that are not historical. Each row is an Odoo contact. Reference is the SalesPad prospect number, and Notes name the prospect. Columns that start with gp_ are reference only.',
+            'before' => [
+                'Open Contacts. The gear menu on that list has Import records.',
+                'On state_id/id, choose State / External ID. On country_id/id, choose Country / External ID. On user_id/id, choose Salesperson / External ID. On comment, choose Notes. On ref, choose Reference. Set every gp_ column to Do not import.',
+            ],
+            'hint' => 'Contacts. Import records is on that list.',
+            'fields' => [
+                'id' => 'External ID',
+                'name' => 'Name',
+                'email' => 'Email',
+                'phone' => 'Phone',
+                'function' => 'Job Position',
+                'street' => 'Street',
+                'city' => 'City',
+                'zip' => 'Zip',
+                'state_id/id' => 'State / External ID',
+                'country_id/id' => 'Country / External ID',
+                'ref' => 'Reference',
+                'comment' => 'Notes',
+                'gp_prospect_name' => 'Do not import',
+                'gp_prospect' => 'Do not import',
+            ],
+            'odoo' => 'Contacts',
+            'file' => 'odoo18_prospect_contacts.csv',
+            'count_sql' => <<<SQL
+SELECT COUNT(*) AS c
+FROM dbo.spvProspectContact AS c
+INNER JOIN dbo.spvProspect AS p
+    ON p.Prospect_ID = c.Prospect_ID
+WHERE {$open}
+SQL,
+            'sql' => <<<SQL
+SELECT
+    CONCAT('prospect_contact_', c.Contact_ID) AS id,
+    COALESCE(NULLIF({$contactPerson}, ''), NULLIF(RTRIM(c.Email_Address), ''), CONCAT('Contact ', c.Contact_ID)) AS name,
+    RTRIM(c.Email_Address) AS email,
+    {$contactPhone} AS phone,
+    RTRIM(c.xTitle) AS [function],
+    RTRIM(c.Address) AS street,
+    RTRIM(c.City) AS city,
+    RTRIM(c.Zip) AS zip,
+    {$contactState} AS [state_id/id],
+    {$contactCountry} AS [country_id/id],
+    RTRIM(p.Prospect_Number) AS ref,
+    CONCAT(
+        '<p>',
+        {$prospectName},
+        CASE WHEN c.Do_Not_Email = 1 THEN '<br>Do not email' ELSE '' END,
+        CASE WHEN c.Do_Not_Call_1 = 1 THEN '<br>Do not call' ELSE '' END,
+        CASE WHEN RTRIM(ISNULL(c.Phone_2, '')) = '' THEN '' ELSE CONCAT('<br>Phone 2: ', {$phone2}) END,
+        CASE WHEN RTRIM(ISNULL(c.Phone_3, '')) = '' THEN '' ELSE CONCAT('<br>Phone 3: ', {$phone3}) END,
+        '</p>'
+    ) AS comment,
+    RTRIM(c.Sales_Person_ID) AS gp_salesperson,
+    RTRIM(p.Prospect_Name) AS gp_prospect_name,
+    CONCAT('prospect_', p.Prospect_ID) AS gp_prospect
+FROM dbo.spvProspectContact AS c
+INNER JOIN dbo.spvProspect AS p
+    ON p.Prospect_ID = c.Prospect_ID
+WHERE {$open}
+SQL,
+        ],
+        [
+            'key' => 'prospect_interactions',
+            'group' => 'Prospects',
+            'title' => 'Prospect interactions',
+            'detail' => 'SalesPad interactions from spvProspectInteraction for prospects contacted on or after January 1, 2026 that are not historical. Each row is a log note on the Odoo opportunity. Line breaks in the note are HTML. The prospect is looked up in Odoo when the file is copied, and that opportunity id is written in Related Document ID. An interaction whose opportunity is not in Odoo is left out and listed in the report on this page.',
+            'before' => [
+                'Import the prospect file on CRM → Pipeline first. An interaction whose opportunity is not in Odoo yet is left out. Download this file again after those opportunities are imported.',
+                'Turn on developer mode. Settings → General Settings → Developer Tools → Activate the developer mode.',
+                'Import this on Settings → Technical → Messages. On model, choose Related Document Model. On res_id, choose Related Document ID. On body, choose Contents. On date, choose Date. On message_type, choose Type. On subtype_id/id, choose Subtype / External ID.',
+            ],
+            'hint' => 'Messages is under Settings → Technical → Messages. It stays hidden until developer mode is on. Import the prospects first.',
+            'fields' => [
+                'id' => 'External ID',
+                'model' => 'Related Document Model',
+                'res_id' => 'Related Document ID',
+                'subject' => 'Subject',
+                'body' => 'Contents',
+                'date' => 'Date',
+                'message_type' => 'Type',
+                'subtype_id/id' => 'Subtype / External ID',
+            ],
+            'resolve_res_id' => 'crm.lead',
+            'odoo' => 'Messages, log note on the opportunity',
+            'file' => 'odoo18_prospect_interactions.csv',
+            'count_sql' => <<<SQL
+SELECT COUNT(*) AS c
+FROM dbo.spvProspectInteraction AS i
+INNER JOIN dbo.spvProspect AS p
+    ON p.Prospect_ID = i.Prospect_ID
+WHERE {$open}
+SQL,
+            'sql' => <<<SQL
+SELECT
+    CONCAT('prospect_interaction_', i.Interaction_ID) AS id,
+    'crm.lead' AS model,
+    CONCAT('prospect_', i.Prospect_ID) AS res_id,
+    COALESCE(NULLIF(RTRIM(i.Subject), ''), NULLIF(RTRIM(i.Interaction_Type), ''), 'Interaction') AS subject,
+    CONCAT(
+        '<p>',
+        CASE WHEN RTRIM(ISNULL(i.Interaction_Type, '')) = '' THEN '' ELSE CONCAT({$interactionType}, '<br>') END,
+        CASE WHEN RTRIM(ISNULL(i.Assigned_To, '')) = '' THEN '' ELSE CONCAT('Assigned to ', {$interactionWho}, '<br>') END,
+        CASE WHEN RTRIM(ISNULL(i.Contact_Person, '')) = '' THEN '' ELSE CONCAT('Contact: ', {$interactionContact}, '<br>') END,
+        '</p><p>',
+        {$interactionNotes},
+        '</p>'
+    ) AS body,
+    COALESCE(CASE WHEN i.Starts_On > '1900-01-02' THEN i.Starts_On END, i.Created_On) AS date,
+    'comment' AS message_type,
+    'mail.mt_note' AS [subtype_id/id]
+FROM dbo.spvProspectInteraction AS i
+INNER JOIN dbo.spvProspect AS p
+    ON p.Prospect_ID = i.Prospect_ID
+WHERE {$open}
+SQL,
+        ],
+    ];
+}
+
 function partner_exports(): array
 {
     $customerCountry = country_code_sql('a.Country');
-    $stateCode = state_code_sql('a.State');
+    $stateCode = state_xmlid_sql('a.State');
     $customerTerm = payment_term_id_sql('c.Payment_Terms');
     $customerCurrency = currency_id_sql('c.Currency_ID');
     $addressCountry = country_code_sql('a.Country');
@@ -406,6 +818,11 @@ function partner_exports(): array
     $noteText = crm_html_sql('n.Description');
     $noteType = crm_html_sql('n.Note_Type');
     $noteBy = crm_html_sql('n.Created_By');
+    $interactionType = crm_html_sql('i.Interaction_Type');
+    $interactionWho = crm_html_sql('i.Assigned_To');
+    $interactionContact = crm_html_sql('i.Contact_Person');
+    $interactionFollow = "CASE WHEN i.Starts_On IS NOT NULL AND i.Starts_On > '1900-01-02' THEN CONCAT('Follow-up ', CONVERT(varchar(16), i.Starts_On, 120), '<br>') ELSE '' END";
+    $interactionWhen = 'COALESCE(i.Updated_On, i.Created_On)';
     $eventText = crm_html_sql('e.Description');
     $eventContact = crm_html_sql('e.Contact_Name');
     $eventAssigned = crm_html_sql('e.Assigned_To');
@@ -432,13 +849,13 @@ function partner_exports(): array
             'fields' => [
                 'id' => 'External ID',
                 'mobile' => 'Mobile',
-                'state_id' => 'State',
-                'country_id' => 'Country',
+                'state_id/id' => 'State / External ID',
+                'country_id/id' => 'Country / External ID',
                 'currency_id/id' => 'Currency / External ID',
                 'property_payment_term_id/id' => 'Customer Payment Terms / External ID',
                 'use_partner_credit_limit' => 'Partner Limit',
                 'credit_limit' => 'Credit Limit',
-                'vat' => 'Tax ID',
+                'gp_tax_registration' => 'Do not import',
                 'comment' => 'Notes',
                 'x_gp_customer_number' => 'Customer Number',
                 'x_gp_customer_class' => 'Customer Class',
@@ -461,15 +878,15 @@ SELECT
     RTRIM(a.Address_Line_1) AS street,
     RTRIM(a.Address_Line_2) AS street2,
     RTRIM(a.City) AS city,
-    {$stateCode} AS [state_id],
+    {$stateCode} AS [state_id/id],
     RTRIM(a.Zip) AS zip,
-    {$customerCountry} AS [country_id],
+    {$customerCountry} AS [country_id/id],
     RTRIM(a.Contact_Person) AS gp_contact_name,
     {$customerTerm} AS [property_payment_term_id/id],
     {$customerCurrency} AS [currency_id/id],
     CASE WHEN c.Customer_Credit_Limit > 0 THEN 1 ELSE 0 END AS use_partner_credit_limit,
     c.Customer_Credit_Limit AS credit_limit,
-    RTRIM(c.Tax_Registration_Num) AS vat,
+    RTRIM(c.Tax_Registration_Num) AS gp_tax_registration,
     RTRIM(c.Comment_1) AS comment,
     RTRIM(c.Sales_Person_ID) AS gp_salesperson,
     RTRIM(c.Customer_Class) AS x_gp_customer_class,
@@ -497,8 +914,8 @@ SQL,
             ],
             'fields' => [
                 'mobile' => 'Mobile',
-                'state_id' => 'State',
-                'country_id' => 'Country',
+                'state_id/id' => 'State / External ID',
+                'country_id/id' => 'Country / External ID',
                 'parent_id/id' => 'Related Company / External ID',
                 'x_gp_address_code' => 'Address Code',
                 'x_gp_is_primary' => 'Primary',
@@ -525,9 +942,9 @@ SELECT
     RTRIM(a.Address_Line_1) AS street,
     RTRIM(a.Address_Line_2) AS street2,
     RTRIM(a.City) AS city,
-    {$stateCode} AS [state_id],
+    {$stateCode} AS [state_id/id],
     RTRIM(a.Zip) AS zip,
-    {$addressCountry} AS [country_id],
+    {$addressCountry} AS [country_id/id],
     RTRIM(a.Address_Code) AS x_gp_address_code,
     RTRIM(a.Address_Line_3) AS gp_street3,
     CASE WHEN RTRIM(a.Address_Code) = RTRIM(c.Primary_Addr_Code) THEN 1 ELSE 0 END AS x_gp_is_primary,
@@ -543,10 +960,11 @@ SQL,
             'key' => 'customer_crm_notes',
             'group' => 'Customers and vendors',
             'title' => 'Customer CRM notes',
-            'detail' => 'SalesPad notes from spCRMNote. Each row is a log note on the Odoo customer. The customer number is looked up in Odoo when the file is copied, and that contact id is written in Related Document ID. A note whose customer is not in Odoo is left out and listed in the report on this page.',
+            'detail' => 'SalesPad notes from spCRMNote. Each row is a log note on the Odoo customer. The customer number is looked up in Odoo when the file is copied, and that contact id is written in Related Document ID. Author is the Odoo user who matches the SalesPad person in Created By. A note whose customer is not in Odoo is left out and listed in the report on this page.',
             'before' => [
                 'Import customers first. A note whose customer is not in Odoo yet is left out of the file and listed in the report on this page.',
                 'Turn on developer mode. Settings → General Settings → Developer Tools → Activate the developer mode.',
+                'On author_id/.id, choose Author / Database ID. That is the Odoo person who matches the SalesPad user in Created By. A SalesPad user with no matching Odoo user is left blank, and Odoo keeps the person doing the import.',
             ],
             'hint' => 'Messages is under Settings → Technical → Messages. It stays hidden until developer mode is on.',
             'fields' => [
@@ -556,6 +974,7 @@ SQL,
                 'subject' => 'Subject',
                 'body' => 'Contents',
                 'date' => 'Date',
+                'author_id/.id' => 'Author / Database ID',
                 'message_type' => 'Type',
                 'subtype_id/id' => 'Subtype / External ID',
             ],
@@ -577,6 +996,7 @@ SELECT
     RTRIM(n.Note_Type) AS subject,
     CONCAT('<p>', {$noteType}, ' · ', {$noteBy}, '</p><p>', {$noteText}, '</p>') AS body,
     n.Created_On AS date,
+    [[note_author_id]] AS [author_id/.id],
     'comment' AS message_type,
     'mail.mt_note' AS [subtype_id/id]
 FROM dbo.spCRMNote AS n
@@ -586,10 +1006,67 @@ WHERE RTRIM(ISNULL(n.Customer_Num, '')) <> ''
 SQL,
         ],
         [
+            'key' => 'customer_interactions',
+            'group' => 'Customers and vendors',
+            'title' => 'Customer interactions',
+            'detail' => 'SalesPad interactions from spvCustomerInteraction. Each dated line in the SalesPad note becomes its own log note on the Odoo customer, with that line’s date. Lines under a date, such as (2) or (3), stay on that note. The customer number is looked up in Odoo when the file is copied, and that contact id is written in Related Document ID. Author is the Odoo person who matches Assigned To, or Created By when Assigned To does not match. A row whose customer is not in Odoo is left out and listed in the report on this page.',
+            'before' => [
+                'Import customers first. An interaction whose customer is not in Odoo yet is left out of the file and listed in the report on this page.',
+                'Turn on developer mode. Settings → General Settings → Developer Tools → Activate the developer mode.',
+                'Import this on the same Messages screen as the CRM notes. On author_id/.id, choose Author / Database ID. A SalesPad user with no matching Odoo person is left blank, and Odoo keeps the person doing the import. Each dated line is already its own row in this file.',
+            ],
+            'hint' => 'Messages is under Settings → Technical → Messages. It stays hidden until developer mode is on.',
+            'fields' => [
+                'id' => 'External ID',
+                'model' => 'Related Document Model',
+                'res_id' => 'Related Document ID',
+                'subject' => 'Subject',
+                'body' => 'Contents',
+                'date' => 'Date',
+                'author_id/.id' => 'Author / Database ID',
+                'message_type' => 'Type',
+                'subtype_id/id' => 'Subtype / External ID',
+            ],
+            'resolve_res_id' => 'res.partner',
+            'odoo' => 'Messages, log note on the customer',
+            'file' => 'odoo18_customer_interactions.csv',
+            'count_sql' => <<<'SQL'
+SELECT COUNT(*) AS c
+FROM dbo.spvCustomerInteraction AS i
+INNER JOIN dbo.spvCustomer AS c
+    ON RTRIM(c.Customer_Num) = RTRIM(i.Customer_Num)
+WHERE RTRIM(ISNULL(i.Customer_Num, '')) <> ''
+SQL,
+            'sql' => <<<SQL
+SELECT
+    CONCAT('interaction_', i.Interaction_ID, '_', REPLACE(RTRIM(i.Customer_Num), ' ', '_')) AS id,
+    'res.partner' AS model,
+    CONCAT('partner_', RTRIM(i.Customer_Num)) AS res_id,
+    COALESCE(NULLIF(RTRIM(i.Subject), ''), NULLIF(RTRIM(i.Interaction_Type), ''), 'Interaction') AS subject,
+    CONCAT(
+        '<p>',
+        CASE WHEN RTRIM(ISNULL(i.Interaction_Type, '')) = '' THEN '' ELSE CONCAT({$interactionType}, ' · ') END,
+        CASE WHEN RTRIM(ISNULL(i.Assigned_To, '')) = '' THEN '' ELSE CONCAT('Assigned to ', {$interactionWho}, '<br>') END,
+        CASE WHEN RTRIM(ISNULL(i.Contact_Person, '')) = '' THEN '' ELSE CONCAT('Contact: ', {$interactionContact}, '<br>') END,
+        {$interactionFollow},
+        '</p>'
+    ) AS body,
+    CAST(i.Notes AS nvarchar(max)) AS note_log,
+    {$interactionWhen} AS date,
+    [[interaction_author_id]] AS [author_id/.id],
+    'comment' AS message_type,
+    'mail.mt_note' AS [subtype_id/id]
+FROM dbo.spvCustomerInteraction AS i
+INNER JOIN dbo.spvCustomer AS c
+    ON RTRIM(c.Customer_Num) = RTRIM(i.Customer_Num)
+WHERE RTRIM(ISNULL(i.Customer_Num, '')) <> ''
+SQL,
+        ],
+        [
             'key' => 'customer_crm_events',
             'group' => 'Customers and vendors',
             'title' => 'Customer CRM events',
-            'detail' => 'SalesPad events from spCRMEvent. Each row is a meeting on Calendar → Calendar, organized by the Odoo user who matches the SalesPad person in Assigned To. Do not import this file on Configuration → Calendars. That screen has no Start or Stop. A customer is added as an attendee when the customer number is filled in, or when the subject matches exactly one customer name.',
+            'detail' => 'SalesPad events from spCRMEvent and appointments from spvInteraction. Each row is a meeting on Calendar → Calendar, organized by the Odoo user who matches the SalesPad person in Assigned To. Do not import this file on Configuration → Calendars. That screen has no Start or Stop. A customer is added as an attendee when the customer number is filled in, or when the subject matches exactly one customer name. An interaction with no real start date is left out of this calendar file.',
             'before' => [
                 'Import customers first so an event with a customer can point at that contact.',
                 'Open Calendar → Calendar. Switch to the list of meetings. The gear menu on that list has Import records. Configuration → Calendars is a different screen, and Start and Stop will not map there.',
@@ -609,16 +1086,33 @@ SQL,
             ],
             'odoo' => 'Calendar → Calendar, meetings list',
             'file' => 'odoo18_customer_crm_events.csv',
-            'count_sql' => 'SELECT COUNT(*) AS c FROM dbo.spCRMEvent AS e WHERE COALESCE(e.Starts_On, e.Created_On) IS NOT NULL',
+            'count_sql' => <<<'SQL'
+SELECT COUNT(*) AS c
+FROM (
+    SELECT e.Event_ID
+    FROM dbo.spCRMEvent AS e
+    WHERE COALESCE(e.Starts_On, e.Created_On) IS NOT NULL
+    UNION ALL
+    SELECT i.Interaction_ID
+    FROM dbo.spvInteraction AS i
+    WHERE i.Starts_On IS NOT NULL
+      AND i.Starts_On > '1900-01-02'
+) AS src
+SQL,
             'sql' => <<<SQL
 SELECT
-    CONCAT('crm_event_', e.Event_ID) AS id,
-    COALESCE(NULLIF(RTRIM(e.Subject), ''), NULLIF(RTRIM(e.Contact_Name), ''), CONCAT('Event ', e.Event_ID)) AS name,
+    e.Event_Key AS id,
+    COALESCE(NULLIF(RTRIM(e.Subject), ''), NULLIF(RTRIM(e.Contact_Name), ''), e.Event_Key) AS name,
     {$eventStart} AS start,
     {$eventStop} AS stop,
     0 AS allday,
     [[event_user_id]] AS [user_id/.id],
     [[event_attendees]] AS [partner_ids/.id],
+    CASE
+        WHEN RTRIM(ISNULL(e.Customer_Num, '')) <> '' THEN CONCAT('partner_', RTRIM(e.Customer_Num))
+        WHEN e.Matched_Num IS NOT NULL AND RTRIM(e.Matched_Num) <> '' THEN CONCAT('partner_', RTRIM(e.Matched_Num))
+        ELSE ''
+    END AS customer_key,
     CONCAT(
         '<p>',
         CASE WHEN RTRIM(ISNULL(e.Contact_Name, '')) = '' THEN '' ELSE CONCAT('Contact: ', {$eventContact}, '<br>') END,
@@ -628,20 +1122,59 @@ SELECT
         {$eventText},
         '</p>'
     ) AS description
-FROM dbo.spCRMEvent AS e
-OUTER APPLY (
-    SELECT TOP 1 RTRIM(c.Customer_Num) AS Customer_Num
-    FROM dbo.spvCustomer AS c
-    WHERE RTRIM(ISNULL(e.Customer_Num, '')) = ''
-      AND RTRIM(ISNULL(e.Subject, '')) <> ''
-      AND RTRIM(c.Customer_Name) = RTRIM(e.Subject)
-      AND (
-          SELECT COUNT(*)
-          FROM dbo.spvCustomer AS c2
-          WHERE RTRIM(c2.Customer_Name) = RTRIM(e.Subject)
-      ) = 1
-) AS named
-WHERE COALESCE(e.Starts_On, e.Created_On) IS NOT NULL
+FROM (
+    SELECT
+        CONCAT('crm_event_', src.Event_ID) AS Event_Key,
+        src.Subject,
+        src.Contact_Name,
+        src.Assigned_To,
+        src.Starts_On,
+        src.Ends_On,
+        src.Duration,
+        src.Is_Complete,
+        REPLACE(CAST(src.Description AS nvarchar(max)), CHAR(13), CHAR(10)) AS Description,
+        src.Customer_Num,
+        src.Created_On,
+        named.Customer_Num AS Matched_Num
+    FROM dbo.spCRMEvent AS src
+    OUTER APPLY (
+        SELECT TOP 1 RTRIM(c.Customer_Num) AS Customer_Num
+        FROM dbo.spvCustomer AS c
+        WHERE RTRIM(ISNULL(src.Customer_Num, '')) = ''
+          AND RTRIM(ISNULL(src.Subject, '')) <> ''
+          AND RTRIM(c.Customer_Name) = RTRIM(src.Subject)
+          AND (
+              SELECT COUNT(*)
+              FROM dbo.spvCustomer AS c2
+              WHERE RTRIM(c2.Customer_Name) = RTRIM(src.Subject)
+          ) = 1
+    ) AS named
+    WHERE COALESCE(src.Starts_On, src.Created_On) IS NOT NULL
+    UNION ALL
+    SELECT
+        CONCAT('crm_event_interaction_', i.Interaction_ID) AS Event_Key,
+        i.Subject,
+        i.Contact_Person AS Contact_Name,
+        i.Assigned_To,
+        i.Starts_On,
+        i.Ends_On,
+        i.Duration,
+        i.Is_Complete,
+        REPLACE(CAST(i.Notes AS nvarchar(max)), CHAR(13), CHAR(10)) AS Description,
+        link.Customer_Num,
+        i.Created_On,
+        CAST(NULL AS nvarchar(50)) AS Matched_Num
+    FROM dbo.spvInteraction AS i
+    OUTER APPLY (
+        SELECT TOP 1 RTRIM(l.Customer_Num) AS Customer_Num
+        FROM dbo.spvCustomerInteractionLink AS l
+        WHERE l.Interaction_ID = i.Interaction_ID
+          AND RTRIM(ISNULL(l.Customer_Num, '')) <> ''
+        ORDER BY RTRIM(l.Customer_Num)
+    ) AS link
+    WHERE i.Starts_On IS NOT NULL
+      AND i.Starts_On > '1900-01-02'
+) AS e
 SQL,
         ],
         [
@@ -655,8 +1188,8 @@ SQL,
             ],
             'fields' => [
                 'mobile' => 'Mobile',
-                'state_id' => 'State',
-                'country_id' => 'Country',
+                'state_id/id' => 'State / External ID',
+                'country_id/id' => 'Country / External ID',
                 'currency_id/id' => 'Currency / External ID',
                 'property_supplier_payment_term_id/id' => 'Vendor Payment Terms / External ID',
                 'comment' => 'Notes',
@@ -679,9 +1212,9 @@ SELECT
     RTRIM(a.Address_Line_1) AS street,
     RTRIM(a.Address_Line_2) AS street2,
     RTRIM(a.City) AS city,
-    {$stateCode} AS [state_id],
+    {$stateCode} AS [state_id/id],
     RTRIM(a.Zip) AS zip,
-    {$vendorCountry} AS [country_id],
+    {$vendorCountry} AS [country_id/id],
     {$vendorTerm} AS [property_supplier_payment_term_id/id],
     {$vendorCurrency} AS [currency_id/id],
     RTRIM(v.Comment1) AS comment,
@@ -707,8 +1240,8 @@ SQL,
             ],
             'fields' => [
                 'mobile' => 'Mobile',
-                'state_id' => 'State',
-                'country_id' => 'Country',
+                'state_id/id' => 'State / External ID',
+                'country_id/id' => 'Country / External ID',
                 'parent_id/id' => 'Related Company / External ID',
                 'x_gp_address_code' => 'Address Code',
             ],
@@ -730,9 +1263,9 @@ SELECT
     RTRIM(a.Address_Line_1) AS street,
     RTRIM(a.Address_Line_2) AS street2,
     RTRIM(a.City) AS city,
-    {$stateCode} AS [state_id],
+    {$stateCode} AS [state_id/id],
     RTRIM(a.Zip) AS zip,
-    {$vendorCountry} AS [country_id],
+    {$vendorCountry} AS [country_id/id],
     RTRIM(a.Address_Code) AS x_gp_address_code,
     RTRIM(a.Address_Line_3) AS gp_street3
 FROM dbo.spvVendorAddr AS a
@@ -912,36 +1445,47 @@ SQL,
             'key' => 'inventory_on_hand',
             'group' => 'Products',
             'title' => 'Inventory on hand',
-            'detail' => 'Odoo inventory counts. Import products and warehouse locations first, then apply the inventory in Odoo. The product column is the variant, product_variant_ plus the item number. Services and other items that are not Sales Inventory are left out. Odoo cannot put a quantity on a consumable or a service.',
+            'detail' => 'Odoo inventory counts, one row per item and bin. Import the warehouses and the bins first. The location is that warehouse’s stock location and the bin, such as US/Stock/PICK ROOM. Odoo shows the warehouse from that location. Services and other items that are not Sales Inventory are left out. Odoo cannot put a quantity on a consumable or a service.',
             'fields' => [
-                'product_id/id' => 'Variant / External ID',
+                'product_id/id' => 'Product / External ID',
+                'location_id' => 'Do not import',
+                'location_id/id' => 'Location / External ID',
+                'gp_qty_allocated' => 'Do not import',
             ],
             'odoo' => 'Inventory adjustment',
             'file' => 'odoo18_inventory_on_hand.csv',
             'count_sql' => <<<'SQL'
 SELECT COUNT(*) AS c
-FROM dbo.IV00102 AS q
-INNER JOIN dbo.spvItemMaster AS i
-    ON RTRIM(i.Item_Number) = RTRIM(q.ITEMNMBR)
-   AND RTRIM(i.Item_Type) = 'Sales Inventory'
-WHERE RTRIM(q.LOCNCODE) <> ''
-  AND (q.QTYONHND <> 0 OR q.ATYALLOC <> 0 OR q.QTYONORD <> 0 OR q.QTYBKORD <> 0)
+FROM (
+    SELECT RTRIM(m.Item_Number) AS item_number, RTRIM(m.Location) AS location, REPLACE(REPLACE(REPLACE(RTRIM(m.Bin), CHAR(13), ''), CHAR(10), ''), ' ', '_') AS bin
+    FROM dbo.spvInventoryMultibin AS m
+    INNER JOIN dbo.spvItemMaster AS i
+        ON RTRIM(i.Item_Number) = RTRIM(m.Item_Number)
+       AND RTRIM(i.Item_Type) = 'Sales Inventory'
+    WHERE RTRIM(m.Location) <> ''
+      AND RTRIM(m.Location) <> 'LOCNCODE'
+      AND REPLACE(REPLACE(RTRIM(m.Bin), CHAR(13), ''), CHAR(10), '') <> ''
+    GROUP BY RTRIM(m.Item_Number), RTRIM(m.Location), REPLACE(REPLACE(REPLACE(RTRIM(m.Bin), CHAR(13), ''), CHAR(10), ''), ' ', '_')
+    HAVING SUM(m.Quantity) <> 0
+) AS counts
 SQL,
             'sql' => <<<'SQL'
 SELECT
-    CONCAT('stock_', RTRIM(q.ITEMNMBR), '_', RTRIM(q.LOCNCODE)) AS id,
-    CONCAT('__import__.product_variant_', RTRIM(q.ITEMNMBR)) AS [product_id/id],
-    CONCAT('stock_location_', RTRIM(q.LOCNCODE)) AS [location_id/id],
-    q.QTYONHND AS inventory_quantity,
-    q.ATYALLOC AS gp_qty_allocated,
-    q.QTYONORD AS gp_qty_on_order,
-    q.QTYBKORD AS gp_qty_backordered
-FROM dbo.IV00102 AS q
+    CONCAT('stock_', RTRIM(m.Item_Number), '_', RTRIM(m.Location), '_', REPLACE(REPLACE(REPLACE(RTRIM(m.Bin), CHAR(13), ''), CHAR(10), ''), ' ', '_')) AS id,
+    CONCAT('__import__.product_variant_', RTRIM(m.Item_Number)) AS [product_id/id],
+    CONCAT(RTRIM(m.Location), '/Stock/', REPLACE(REPLACE(RTRIM(m.Bin), CHAR(13), ''), CHAR(10), '')) AS location_id,
+    CONCAT('__import__.stock_bin_', RTRIM(m.Location), '_', REPLACE(REPLACE(REPLACE(RTRIM(m.Bin), CHAR(13), ''), CHAR(10), ''), ' ', '_')) AS [location_id/id],
+    SUM(m.Quantity) AS inventory_quantity,
+    SUM(m.Qty_Allocated) AS gp_qty_allocated
+FROM dbo.spvInventoryMultibin AS m
 INNER JOIN dbo.spvItemMaster AS i
-    ON RTRIM(i.Item_Number) = RTRIM(q.ITEMNMBR)
+    ON RTRIM(i.Item_Number) = RTRIM(m.Item_Number)
    AND RTRIM(i.Item_Type) = 'Sales Inventory'
-WHERE RTRIM(q.LOCNCODE) <> ''
-  AND (q.QTYONHND <> 0 OR q.ATYALLOC <> 0 OR q.QTYONORD <> 0 OR q.QTYBKORD <> 0)
+WHERE RTRIM(m.Location) <> ''
+  AND RTRIM(m.Location) <> 'LOCNCODE'
+  AND REPLACE(REPLACE(RTRIM(m.Bin), CHAR(13), ''), CHAR(10), '') <> ''
+GROUP BY RTRIM(m.Item_Number), RTRIM(m.Location), REPLACE(REPLACE(RTRIM(m.Bin), CHAR(13), ''), CHAR(10), ''), REPLACE(REPLACE(REPLACE(RTRIM(m.Bin), CHAR(13), ''), CHAR(10), ''), ' ', '_')
+HAVING SUM(m.Quantity) <> 0
 SQL,
         ],
     ];

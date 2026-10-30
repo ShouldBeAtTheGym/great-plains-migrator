@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\CompanyRosterController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\GreatPlainsTabController;
 use App\Http\Controllers\GpSetupController;
@@ -47,7 +48,6 @@ Route::middleware(['office.login', 'setup.ready'])->group(function () {
     Route::get('/steps/{key}/copy', [StepController::class, 'copyStatus'])->name('steps.copy');
     Route::post('/steps/{key}/copy', [StepController::class, 'copyStart'])->name('steps.copy.start');
     Route::get('/steps/customer_price_lists/missing', [StepController::class, 'downloadMissingPriceLists'])->name('steps.price-lists.missing');
-    Route::post('/steps/{key}/api-import', [StepController::class, 'apiImport'])->name('steps.api-import');
     Route::get('/steps/{key}/download/{part?}', [StepController::class, 'download'])->where('part', '[0-9]+')->name('steps.download');
     Route::get('/steps/{key}/problems', [StepController::class, 'problems'])->name('steps.problems');
     Route::post('/steps/{key}/company', [StepController::class, 'importCompany'])->name('steps.import-company');
@@ -63,6 +63,8 @@ Route::middleware(['office.login', 'setup.ready'])->group(function () {
     Route::get('/salespeople/contacts', [SalespersonController::class, 'downloadContacts'])->name('salespeople.contacts');
     Route::get('/salespeople/employees', [SalespersonController::class, 'downloadEmployees'])->name('salespeople.employees');
     Route::get('/salespeople/download', [SalespersonController::class, 'download'])->name('salespeople.download');
+    Route::get('/employees/departments', [CompanyRosterController::class, 'departments'])->name('employees.departments');
+    Route::get('/employees/download', [CompanyRosterController::class, 'employees'])->name('employees.download');
     Route::post('/salespeople', [SalespersonController::class, 'update'])->name('salespeople.update');
     Route::get('/user-fields/{model}', [UserFieldController::class, 'show'])->name('user-fields.show');
     Route::post('/user-fields/{model}', [UserFieldController::class, 'update'])->name('user-fields.update');

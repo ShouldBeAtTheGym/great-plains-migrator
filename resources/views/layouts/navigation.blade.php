@@ -36,7 +36,7 @@
                         </x-nav-link>
                     @endif
                     @auth
-                        <x-nav-link :href="route('settings.edit')" :active="request()->routeIs('settings.edit')">
+                        <x-nav-link :href="route('settings.edit')" :active="request()->routeIs('settings.*')">
                             {{ __('Settings') }}
                         </x-nav-link>
                     @endauth
@@ -125,7 +125,7 @@
                 </x-responsive-nav-link>
             @endif
             @auth
-                <x-responsive-nav-link :href="route('settings.edit')" :active="request()->routeIs('settings.edit')">
+                <x-responsive-nav-link :href="route('settings.edit')" :active="request()->routeIs('settings.*')">
                     {{ __('Settings') }}
                 </x-responsive-nav-link>
             @endauth

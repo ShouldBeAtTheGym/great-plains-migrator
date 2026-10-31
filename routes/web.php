@@ -2,8 +2,8 @@
 
 use App\Http\Controllers\CompanyRosterController;
 use App\Http\Controllers\DashboardController;
-use App\Http\Controllers\GreatPlainsTabController;
 use App\Http\Controllers\GpSetupController;
+use App\Http\Controllers\GreatPlainsTabController;
 use App\Http\Controllers\GuideController;
 use App\Http\Controllers\OdooSetupController;
 use App\Http\Controllers\ProductController;
@@ -41,6 +41,7 @@ Route::middleware(['intro.open', 'setup.introduced'])->group(function () {
 Route::middleware(['office.login', 'setup.ready'])->group(function () {
     Route::get('/dashboard', DashboardController::class)->name('dashboard');
     Route::get('/copies', [DashboardController::class, 'copies'])->name('copies');
+    Route::get('/uploads', [DashboardController::class, 'uploads'])->name('uploads');
     Route::post('/copies', [DashboardController::class, 'startCopies'])->name('copies.start');
     Route::get('/setup/great-plains', [GreatPlainsTabController::class, 'show'])->name('setup.great-plains');
     Route::post('/setup/great-plains', [GreatPlainsTabController::class, 'store'])->name('setup.great-plains.store');
@@ -48,6 +49,7 @@ Route::middleware(['office.login', 'setup.ready'])->group(function () {
     Route::get('/steps/{key}/copy', [StepController::class, 'copyStatus'])->name('steps.copy');
     Route::post('/steps/{key}/copy', [StepController::class, 'copyStart'])->name('steps.copy.start');
     Route::get('/steps/customer_price_lists/missing', [StepController::class, 'downloadMissingPriceLists'])->name('steps.price-lists.missing');
+    Route::get('/steps/{key}/missing-customers', [StepController::class, 'downloadMissingCustomers'])->name('steps.missing-customers');
     Route::get('/steps/{key}/download/{part?}', [StepController::class, 'download'])->where('part', '[0-9]+')->name('steps.download');
     Route::get('/steps/{key}/problems', [StepController::class, 'problems'])->name('steps.problems');
     Route::post('/steps/{key}/company', [StepController::class, 'importCompany'])->name('steps.import-company');
@@ -72,6 +74,8 @@ Route::middleware(['office.login', 'setup.ready'])->group(function () {
 
 Route::middleware('auth')->group(function () {
     Route::get('/settings', [SettingsController::class, 'edit'])->name('settings.edit');
+    Route::get('/settings/bad-copy-report', [SettingsController::class, 'badCopy'])->name('settings.bad-copy');
+    Route::get('/settings/bad-copy-report/download', [SettingsController::class, 'badCopyDownload'])->name('settings.bad-copy.download');
     Route::post('/settings/intro-reset', [SettingsController::class, 'resetIntro'])->name('settings.intro.reset');
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');

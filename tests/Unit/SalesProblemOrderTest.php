@@ -2,7 +2,9 @@
 
 namespace Tests\Unit;
 
+use App\Models\Company;
 use App\Services\ExportCatalog;
+use App\Services\GpConnection;
 use App\Services\OdooClient;
 use Tests\TestCase;
 
@@ -66,7 +68,7 @@ class SalesProblemOrderTest extends TestCase
             return [];
         });
 
-        $company = new \App\Models\Company(['gp_company_name' => 'Geckobrands']);
+        $company = new Company(['gp_company_name' => 'Geckobrands']);
         $export = (new ExportCatalog($odoo))->prepare($company, [
             'key' => 'sales_orders_open_headers',
             'fields' => [],
@@ -93,7 +95,7 @@ class SalesProblemOrderTest extends TestCase
             return [];
         });
 
-        $company = new \App\Models\Company([
+        $company = new Company([
             'gp_company_name' => 'Howies Hockey Tape',
             'odoo_company_name' => "HOWIE'S HOCKEY, INCORPORATED",
         ]);
@@ -104,5 +106,81 @@ class SalesProblemOrderTest extends TestCase
         ]);
 
         $this->assertSame('base.main_company', $export['extra']['company_id/id']);
+    }
+
+    public function test_open_invoices_leave_out_customers_that_are_not_in_odoo(): void
+    {
+        $this->mock(GpConnection::class, function ($mock) {
+            $mock->shouldReceive('rows')->once()->andReturn([
+                ['name' => '1000471'],
+                ['name' => '31923'],
+            ]);
+        });
+        $odoo = $this->createMock(OdooClient::class);
+        $odoo->expects($this->once())->method('findExternalIds')->willReturn([
+            'partner_31923' => ['module' => '__import__', 'name' => 'partner_31923', 'res_id' => 10],
+        ]);
+        $odoo->expects($this->never())->method('execute');
+
+        $catalog = new ExportCatalog($odoo);
+        $export = $catalog->omitCustomersNotInOdoo(new Company, null, $catalog->find('sales_invoices_open_headers'));
+
+        $this->assertSame(['1000471'], $export['missing_customers']);
+        $this->assertStringContainsString("RTRIM(h.CUSTNMBR) NOT IN ('1000471')", $export['sql']);
+        $this->assertStringContainsString("RTRIM(h.CUSTNMBR) NOT IN ('1000471')", $export['count_sql']);
+        $this->assertStringNotContainsString('31923', $export['sql']);
+        $this->assertStringContainsString('Customer is not in Odoo.', $export['problem_sql']);
+        $this->assertStringContainsString('No customer number.', $export['problem_sql']);
+        $this->assertStringContainsString("RTRIM(h.CUSTNMBR) IN ('1000471')", $export['problem_sql']);
+        $this->assertSame(1, substr_count($export['problem_sql'], "IN ('1000471')"));
+    }
+
+    public function test_a_customer_already_in_odoo_stays_on_the_open_invoice_file(): void
+    {
+        $this->mock(GpConnection::class, function ($mock) {
+            $mock->shouldReceive('rows')->once()->andReturn([
+                ['name' => '31923'],
+            ]);
+        });
+        $odoo = $this->createMock(OdooClient::class);
+        $odoo->method('findExternalIds')->willReturn([
+            'partner_31923' => ['module' => '__import__', 'name' => 'partner_31923', 'res_id' => 10],
+        ]);
+
+        $catalog = new ExportCatalog($odoo);
+        $original = $catalog->find('sales_invoices_open_headers');
+        $export = $catalog->omitCustomersNotInOdoo(new Company, null, $original);
+
+        $this->assertSame($original['sql'], $export['sql']);
+        $this->assertArrayNotHasKey('missing_customers', $export);
+    }
+
+    public function test_historical_invoices_are_not_filtered_by_the_open_customer_check(): void
+    {
+        $catalog = new ExportCatalog($this->createMock(OdooClient::class));
+        $original = $catalog->find('sales_invoices_history_headers');
+        $export = $catalog->omitCustomersNotInOdoo(new Company, null, $original);
+
+        $this->assertSame($original['sql'], $export['sql']);
+        $this->assertArrayNotHasKey('missing_customers', $export);
+    }
+
+    public function test_an_unreachable_odoo_leaves_the_open_invoice_file_unchanged(): void
+    {
+        $this->mock(GpConnection::class, function ($mock) {
+            $mock->shouldReceive('rows')->once()->andReturn([
+                ['name' => '1000471'],
+            ]);
+        });
+        $odoo = $this->createMock(OdooClient::class);
+        $odoo->method('findExternalIds')->willReturn([]);
+        $odoo->method('execute')->willThrowException(new \RuntimeException('Odoo is down.'));
+
+        $catalog = new ExportCatalog($odoo);
+        $original = $catalog->find('sales_invoices_open_headers');
+        $export = $catalog->omitCustomersNotInOdoo(new Company, null, $original);
+
+        $this->assertSame($original['sql'], $export['sql']);
+        $this->assertArrayNotHasKey('missing_customers', $export);
     }
 }

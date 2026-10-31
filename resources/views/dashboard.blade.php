@@ -47,6 +47,7 @@
             </div>
 
             @include('partials.gp-copy-queue', ['queue' => $queue, 'reload' => false])
+            @include('partials.api-uploads', ['uploads' => $uploads ?? ['jobs' => [], 'limited' => false]])
 
             @if ($countError)
                 <div class="alert alert-bad">{{ $countError }}</div>

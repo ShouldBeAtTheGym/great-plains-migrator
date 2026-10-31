@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Company;
 use App\Models\ConversionStep;
+use App\Services\ApiUploadQueue;
 use App\Services\ConversionPlanner;
 use App\Services\ExportCatalog;
 use App\Services\GpCopyService;
@@ -14,7 +15,7 @@ use RuntimeException;
 
 class DashboardController extends Controller
 {
-    public function __invoke(ExportCatalog $catalog, ConversionPlanner $planner, GpCopyService $copies): View
+    public function __invoke(ExportCatalog $catalog, ConversionPlanner $planner, GpCopyService $copies, ApiUploadQueue $uploads): View
     {
         $company = Company::current();
         $savedKeys = $company->steps()->pluck('export_key')->all();
@@ -63,7 +64,13 @@ class DashboardController extends Controller
             'total' => $total,
             'countError' => $countError,
             'queue' => $copies->catalogQueue($company),
+            'uploads' => $uploads->status(),
         ]);
+    }
+
+    public function uploads(ApiUploadQueue $uploads): JsonResponse
+    {
+        return response()->json($uploads->status());
     }
 
     public function copies(GpCopyService $copies): JsonResponse

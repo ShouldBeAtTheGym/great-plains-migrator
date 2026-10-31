@@ -14,6 +14,7 @@ class ConversionPlanner
         private ExportCatalog $catalog,
         private GpConnection $gp,
         private OdooClient $odoo,
+        private ApiUploadQueue $uploads,
     ) {}
 
     public function syncSteps(Company $company): void
@@ -210,6 +211,7 @@ class ConversionPlanner
         }
 
         $connection = $this->gp->connect($company);
+        $large = false;
         try {
             $export = $this->catalog->bindItemUserFields($company, $export, $connection);
             $export = $this->catalog->assignCrmEventUsers($company, $connection, $export);
@@ -220,13 +222,19 @@ class ConversionPlanner
                     'ok' => true,
                     'checked' => 0,
                     'found' => 0,
+                    'large' => false,
                     'message' => 'Great Plains has no rows for this file, so there is nothing to import.',
                 ];
             }
 
-            $ids = $this->catalog->externalIds($connection, $export, min(5, $gpCount));
+            $large = $this->uploads->isLarge($gpCount);
+            $ids = $large ? [] : $this->catalog->externalIds($connection, $export, min(5, $gpCount));
         } finally {
             sqlsrv_close($connection);
+        }
+
+        if ($large) {
+            $ids = $this->uploads->partOneIds($company, $export['key']);
         }
 
         if ($ids === []) {
@@ -234,7 +242,10 @@ class ConversionPlanner
                 'ok' => false,
                 'checked' => 0,
                 'found' => 0,
-                'message' => 'The file has rows, but this app could not read sample record ids from Great Plains.',
+                'large' => $large,
+                'message' => $large
+                    ? 'Part 1 is not in the saved copy yet. Wait until the copy finishes, then download part 1, test it, and upload the document.'
+                    : 'The file has rows, but this app could not read sample record ids from Great Plains.',
             ];
         }
 
@@ -247,7 +258,10 @@ class ConversionPlanner
                 'ok' => false,
                 'checked' => count($ids),
                 'found' => $foundCount,
-                'message' => 'Odoo has '.$foundCount.' of '.count($ids).' sample records from this file. Import the CSV, then confirm again. Columns that start with gp_ must be set to Do not import.',
+                'large' => $large,
+                'message' => $large
+                    ? 'Part 1 was not uploaded. Odoo has '.$foundCount.' of '.count($ids).' sample records from part 1. Download part 1, test it, and upload the document, then confirm again.'
+                    : 'Odoo has '.$foundCount.' of '.count($ids).' sample records from this file. Import the CSV, then confirm again. Columns that start with gp_ must be set to Do not import.',
             ];
         }
 
@@ -271,7 +285,10 @@ class ConversionPlanner
                     'ok' => false,
                     'checked' => count($ids),
                     'found' => $foundCount,
-                    'message' => 'Odoo has the documents, but '.$empty.' of them have no lines. Import the lines file, then confirm again.',
+                    'large' => $large,
+                    'message' => $large
+                        ? 'Part 1 was not uploaded. The documents are in Odoo, but '.$empty.' of the part 1 samples have no lines. Download part 1, test it, and upload the document, then confirm again.'
+                        : 'Odoo has the documents, but '.$empty.' of them have no lines. Import the lines file, then confirm again.',
                 ];
             }
         }
@@ -280,7 +297,10 @@ class ConversionPlanner
             'ok' => true,
             'checked' => count($ids),
             'found' => $foundCount,
-            'message' => 'Odoo has all '.$foundCount.' sample records from this file.',
+            'large' => $large,
+            'message' => $large
+                ? 'Part 1 is in Odoo. Odoo has all '.$foundCount.' sample records from part 1.'
+                : 'Odoo has all '.$foundCount.' sample records from this file.',
         ];
     }
 

@@ -14,6 +14,16 @@
                     <button class="btn btn-primary" type="submit">Reset intro</button>
                 </form>
             </div>
+            <div class="card" style="margin-top:1rem;">
+                <h3 class="font-semibold text-lg text-gray-800">Bad copy report</h3>
+                <p class="lead">When Odoo rejects a row during an upload, that row is listed in the bad copy report and the upload stays stopped.</p>
+                @if (($badCopyCount ?? 0) > 0)
+                    <p><strong>{{ number_format($badCopyCount) }}</strong> {{ $badCopyCount === 1 ? 'bad row' : 'bad rows' }}.</p>
+                @else
+                    <p>No bad rows yet.</p>
+                @endif
+                <a class="btn btn-primary" href="{{ route('settings.bad-copy') }}">Bad copy report</a>
+            </div>
         </div>
     </div>
 </x-app-layout>

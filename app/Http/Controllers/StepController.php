@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Company;
 use App\Models\ConversionStep;
+use App\Services\ApiUploadQueue;
 use App\Services\ConversionPlanner;
 use App\Services\ExportCatalog;
 use App\Services\GpConnection;
@@ -84,6 +85,7 @@ class StepController extends Controller
             'parts' => $catalog->partCount($savedCount ?? $count),
             'copy' => $copy,
             'queue' => $copies->catalogQueue($company),
+            'uploads' => app(ApiUploadQueue::class)->status(),
             'loadError' => $loadError,
             'odooCompanies' => $odooCompanies,
             'companyLoadError' => $companyLoadError,
@@ -181,6 +183,11 @@ class StepController extends Controller
         }
         $count = (int) $ready->saved_count;
         $parts = $catalog->partCount($count);
+        if ($count > ApiUploadQueue::ROWS && $part !== null && $part > 1) {
+            return redirect()
+                ->route('steps.show', $key)
+                ->with('error', 'Only part 1 is downloaded from this page. Download part 1, test it, and upload the document. After you confirm, the server uploads part 2 onward.');
+        }
         if ($parts > 1 && $part === null) {
             return redirect()
                 ->route('steps.show', $key)
@@ -248,7 +255,60 @@ class StepController extends Controller
         ]);
     }
 
-    public function problems(string $key, ExportCatalog $catalog, GpConnection $gp, GpCopyService $copies): StreamedResponse
+    public function downloadMissingCustomers(string $key, ExportCatalog $catalog, GpConnection $gp): StreamedResponse|RedirectResponse
+    {
+        @set_time_limit(0);
+        $company = Company::current();
+        $export = $this->export($catalog, $key);
+        $this->step($company, $key);
+
+        $connection = null;
+        try {
+            $export = $catalog->prepare($company, $export);
+            $connection = $gp->connect($company);
+            $export = $catalog->omitCustomersNotInOdoo($company, $connection, $export);
+            $missing = is_array($export['missing_customers'] ?? null) ? $export['missing_customers'] : [];
+            if ($missing === []) {
+                sqlsrv_close($connection);
+
+                return redirect()
+                    ->route('steps.show', $key)
+                    ->with('status', 'Every customer on this file is already in Odoo.');
+            }
+
+            $customers = $catalog->find('customers');
+            if ($customers === null) {
+                throw new RuntimeException('The customer file is not available.');
+            }
+            $customers = $catalog->prepare($company, $customers);
+            $ids = array_map(static fn (string $number) => 'partner_'.$number, $missing);
+            $customers['sql'] = $catalog->onlyIds($customers['sql'], $ids);
+            $customers['file'] = 'odoo18_customers_missing.csv';
+            $statement = $catalog->open($connection, $customers);
+        } catch (RuntimeException $exception) {
+            if (is_resource($connection)) {
+                sqlsrv_close($connection);
+            }
+
+            return redirect()->route('steps.show', $key)->with('error', $exception->getMessage());
+        }
+
+        $filename = $catalog->filename($customers);
+
+        return response()->streamDownload(function () use ($catalog, $connection, $customers, $statement) {
+            @set_time_limit(0);
+            try {
+                $catalog->stream($connection, $customers, null, $statement);
+            } finally {
+                sqlsrv_close($connection);
+            }
+        }, $filename, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Cache-Control' => 'no-store',
+        ]);
+    }
+
+    public function problems(string $key, ExportCatalog $catalog, GpConnection $gp, GpCopyService $copies): StreamedResponse|RedirectResponse
     {
         $company = Company::current();
         $export = $this->export($catalog, $key);
@@ -265,6 +325,20 @@ class StepController extends Controller
             ]);
         }
         abort_unless(! empty($export['problem_sql']), 404);
+
+        try {
+            $export = $catalog->prepare($company, $export);
+            $connection = $gp->connect($company);
+            try {
+                $export = $catalog->omitCustomersNotInOdoo($company, $connection, $export);
+            } finally {
+                if (is_resource($connection)) {
+                    sqlsrv_close($connection);
+                }
+            }
+        } catch (RuntimeException $exception) {
+            return redirect()->route('steps.show', $key)->with('error', $exception->getMessage());
+        }
 
         $report = [
             'file' => $export['problem_file'],
@@ -286,7 +360,7 @@ class StepController extends Controller
         ]);
     }
 
-    public function confirm(string $key, ExportCatalog $catalog, ConversionPlanner $planner): JsonResponse
+    public function confirm(string $key, ExportCatalog $catalog, ConversionPlanner $planner, ApiUploadQueue $uploads): JsonResponse
     {
         $company = Company::current();
         $export = $this->export($catalog, $key);
@@ -314,6 +388,13 @@ class StepController extends Controller
             ]);
 
             return response()->json($result, 422);
+        }
+
+        if (! empty($result['large'])) {
+            $scheduled = $uploads->schedule($export['key']);
+            if ($scheduled['message'] !== '') {
+                $result['message'] .= ' '.$scheduled['message'];
+            }
         }
 
         $step->update([

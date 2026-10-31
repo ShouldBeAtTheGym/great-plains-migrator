@@ -9,7 +9,6 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
-use RuntimeException;
 use Throwable;
 
 class GpCopyService
@@ -73,7 +72,9 @@ class GpCopyService
             || str_contains($sql, '[[note_author_id]]')
             || str_contains($sql, '[[interaction_author_id]]');
         $needsLeadIds = $resolveModel === 'crm.lead';
-        if (! $needs && ! $needsLeadIds) {
+        $needsOpenCustomers = str_contains((string) ($export['key'] ?? ''), '_open_')
+            && str_contains($sql, '__import__.partner_');
+        if (! $needs && ! $needsLeadIds && ! $needsOpenCustomers) {
             return $export;
         }
 
@@ -86,6 +87,9 @@ class GpCopyService
             }
             if ($needsLeadIds) {
                 $export = $this->catalog->attachPartnerResIds($company, $connection, $export);
+            }
+            if ($needsOpenCustomers) {
+                $export = $this->catalog->omitCustomersNotInOdoo($company, $connection, $export);
             }
 
             return $export;
@@ -423,6 +427,7 @@ class GpCopyService
             $export = $this->catalog->assignCrmNoteAuthors($company, $connection, $export);
             $export = $this->catalog->assignCrmInteractionAuthors($company, $connection, $export);
             $export = $this->catalog->attachPartnerResIds($company, $connection, $export);
+            $export = $this->catalog->omitCustomersNotInOdoo($company, $connection, $export);
             $hash = $this->fingerprint($export);
 
             $countRows = $this->gp->rows($connection, $export['count_sql'], 1);

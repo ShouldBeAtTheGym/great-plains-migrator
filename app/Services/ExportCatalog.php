@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Company;
+use App\Models\SalespadUserField;
 use App\Models\SalespersonLink;
 use RuntimeException;
 
@@ -30,8 +31,8 @@ class ExportCatalog
 
     public function prepare(Company $company, array $export): array
     {
-        if (($export['key'] ?? '') === 'customers' && class_exists(\App\Models\SalespadUserField::class)) {
-            $chosen = \App\Models\SalespadUserField::query()
+        if (($export['key'] ?? '') === 'customers' && class_exists(SalespadUserField::class)) {
+            $chosen = SalespadUserField::query()
                 ->where('company_id', $company->id)
                 ->where('model_key', 'customers')
                 ->where('selected', true)
@@ -442,6 +443,91 @@ class ExportCatalog
         }
 
         $export['res_id_map'] = $map;
+
+        return $export;
+    }
+
+    /**
+     * Open sales documents whose customer was created after the contact import
+     * have no Partner / External ID in Odoo. Odoo rejects the whole file for those rows.
+     *
+     * @return array<string, mixed>
+     */
+    public function omitCustomersNotInOdoo(Company $company, $connection, array $export): array
+    {
+        $key = (string) ($export['key'] ?? '');
+        $sql = (string) ($export['sql'] ?? '');
+        if (! str_contains($key, '_open_') || ! str_contains($sql, '__import__.partner_')) {
+            return $export;
+        }
+
+        $rows = app(GpConnection::class)->rows($connection, "SELECT DISTINCT REPLACE(src.[partner_id/id], '__import__.partner_', '') AS name
+FROM (
+{$sql}
+) AS src
+WHERE src.[partner_id/id] LIKE '__import__.partner[_]%'");
+        $numbers = [];
+        foreach ($rows as $row) {
+            $number = trim((string) ($row['name'] ?? ''));
+            if (preg_match('/^[A-Za-z0-9][A-Za-z0-9 ._-]*$/', $number)) {
+                $numbers[$number] = $number;
+            }
+        }
+        if ($numbers === []) {
+            return $export;
+        }
+
+        $found = [];
+        foreach (array_chunk(array_values($numbers), 300) as $chunk) {
+            $names = array_map(static fn (string $number) => 'partner_'.$number, $chunk);
+            foreach ($this->odoo->findExternalIds($company, ['res.partner'], $names) as $name => $row) {
+                $found[(string) $name] = true;
+            }
+        }
+        if ($found === []) {
+            try {
+                $this->odoo->execute($company, 'ir.model.data', 'search_count', [[]]);
+            } catch (RuntimeException) {
+                return $export;
+            }
+        }
+
+        $missing = [];
+        foreach ($numbers as $number) {
+            if (! isset($found['partner_'.$number]) && ! isset($found['__import__.partner_'.$number])) {
+                $missing[] = $number;
+            }
+        }
+        sort($missing, SORT_STRING);
+        if ($missing === []) {
+            return $export;
+        }
+
+        $list = implode(', ', array_map(
+            static fn (string $number) => "'".str_replace("'", "''", $number)."'",
+            $missing
+        ));
+        $exclude = "RTRIM(h.CUSTNMBR) NOT IN ({$list})";
+        $export['sql'] .= "\n  AND {$exclude}";
+        if (! empty($export['count_sql'])) {
+            $export['count_sql'] .= "\n  AND {$exclude}";
+        }
+
+        $blank = "(NULLIF(RTRIM(h.CUSTNMBR), '') IS NULL)";
+        $problem = "({$blank} OR RTRIM(h.CUSTNMBR) IN ({$list}))";
+        foreach (['problem_sql', 'problem_count_sql'] as $field) {
+            if (! empty($export[$field]) && is_string($export[$field])) {
+                $export[$field] = str_replace($blank, $problem, $export[$field]);
+            }
+        }
+        if (! empty($export['problem_sql']) && is_string($export['problem_sql'])) {
+            $export['problem_sql'] = str_replace(
+                "'No customer number.' AS problem",
+                "CASE WHEN NULLIF(RTRIM(h.CUSTNMBR), '') IS NULL THEN 'No customer number.' ELSE 'Customer is not in Odoo.' END AS problem",
+                $export['problem_sql']
+            );
+        }
+        $export['missing_customers'] = $missing;
 
         return $export;
     }
@@ -1287,6 +1373,7 @@ SQL);
             $name = $columns[$role] ?? null;
             if (is_string($name) && preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $name)) {
                 $sql = str_replace('[['.$role.']]', $name, $sql);
+
                 continue;
             }
             $sql = str_replace(

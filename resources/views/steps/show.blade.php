@@ -120,9 +120,12 @@
             @if (!empty($export['problem_sql']))
                 <div class="card" style="margin-bottom:1rem;">
                     <h3 style="margin-top:0;">Orders left out of this file</h3>
-                    <p>Orders with no customer number are shown here and left out of the CSV. Odoo cannot match a customer when the number is blank. Download the report and look at them, then download the sales file.</p>
+                    <p>Documents with no customer number are left out of the CSV. Documents whose customer is not in Odoo yet are left out too. Import those customers on Contacts, then download this file again.</p>
+                    @if (!empty($export['missing_customers']))
+                        <p><a class="btn btn-primary" href="{{ route('steps.missing-customers', $export['key']) }}">Download customers not in Odoo</a></p>
+                    @endif
                     @if ($problemCount === 0)
-                        <p>None. Every document in this file has a customer number.</p>
+                        <p>None. Every document in this file has a customer that is already in Odoo.</p>
                     @elseif ($problemCount > 0)
                         <p><strong>{{ number_format($problemCount) }}</strong> {{ $problemCount === 1 ? 'document is' : 'documents are' }} left out.</p>
                         <p><a class="btn btn-primary" href="{{ route('steps.problems', $export['key']) }}">Download problem report</a></p>
@@ -157,9 +160,11 @@
 
             <div class="card" style="margin-bottom:1rem;">
                 <h3 style="margin-top:0">How to move this file into Odoo</h3>
+                @php($serverUpload = ($count ?? 0) > \App\Services\ApiUploadQueue::ROWS)
                 @include('partials.gp-copy-queue', ['queue' => $queue, 'focus' => $export['key'], 'reload' => true])
+                @include('partials.api-uploads', ['uploads' => $uploads ?? ['jobs' => [], 'limited' => false]])
                 <ol class="steps">
-                    <li><span>@if (!empty($export['problem_sql'])) Look at the orders left out, then download the CSV. @else Download the CSV from this page. @endif @if($count !== null) Great Plains currently has {{ number_format($count) }} rows in this file. @endif @if (($parts ?? 1) > 1) Odoo will not take the whole CSV in one upload. Import part 1, then part 2, and so on. Each part has {{ number_format(\App\Services\ExportCatalog::PART_ROWS) }} rows. @endif</span></li>
+                    <li><span>@if ($serverUpload) This file has {{ number_format($count) }} rows. Download part 1 only. Test that file in Odoo, then upload the document. After you confirm, the server uploads part 2 onward. @else @if (!empty($export['problem_sql'])) Look at the orders left out, then download the CSV. @else Download the CSV from this page. @endif @if($count !== null) Great Plains currently has {{ number_format($count) }} rows in this file. @endif @if (($parts ?? 1) > 1) Odoo will not take the whole CSV in one upload. Import part 1, then part 2, and so on. Each part has {{ number_format(\App\Services\ExportCatalog::PART_ROWS) }} rows. @endif @endif</span></li>
                     <li><span>In Odoo, open <strong>{{ $guide['screen'] }}</strong>.@if (!empty($export['hint'])) @include('partials.hover-hint', ['label' => 'Do not see?', 'hint' => $export['hint'], 'callout' => true])@endif</span></li>
                     <li><span>On that list, open the gear menu and choose <strong>Import records</strong>. Upload the CSV.</span></li>
                     <li><span>Match each file column to the Odoo field in the column map. An orange “To import, select a field…” row is not a missing checklist step. Pick the field the map names, or <strong>Do not import</strong> when the map says so. Set every column that starts with <strong>gp_</strong> to <strong>Do not import</strong>, even if Odoo guessed a field.</span></li>
@@ -201,15 +206,15 @@
                     @if (($export['key'] ?? '') === 'customer_addresses')
                         <li><span>On the row <strong>x_gp_address_code</strong>, choose <strong>Address Code</strong>. On <strong>x_gp_is_primary</strong>, choose <strong>Primary</strong>. On <strong>x_gp_is_bill_to</strong>, choose <strong>Bill To</strong>. On <strong>x_gp_is_ship_to</strong>, choose <strong>Ship To</strong>. Address Code is text. The other three are checkboxes. <strong>gp_street3</strong> stays <strong>Do not import</strong>.</span></li>
                     @endif
-                    <li><span>Press Test. When Odoo says the file looks valid, press Import.</span></li>
-                    <li><span>Come back here and press <strong>Confirm import</strong>. This app asks Odoo whether the records exist. When they do, the checklist moves on.</span></li>
+                    <li><span>@if ($serverUpload) Press Test. When Odoo says the file looks valid, upload the document. @else Press Test. When Odoo says the file looks valid, press Import. @endif</span></li>
+                    <li><span>@if ($serverUpload) Come back here and press <strong>Confirm part 1</strong>. This checks that part 1 uploaded. The server then uploads part 2 onward. @else Come back here and press <strong>Confirm import</strong>. This app asks Odoo whether the records exist. When they do, the checklist moves on. @endif</span></li>
                 </ol>
                 @if ($current)
                     <div class="step-actions">
                         <div id="step-downloads" class="step-downloads" @if (($copy['status'] ?? '') !== 'complete') hidden @endif>
                             @if (($parts ?? 1) > 1)
                                 <div class="part-grid">
-                                    @for ($part = 1; $part <= $parts; $part++)
+                                    @for ($part = 1; $part <= ($serverUpload ? 1 : $parts); $part++)
                                         <a class="btn btn-primary" href="{{ route('steps.download', ['key' => $export['key'], 'part' => $part]) }}">Part {{ $part }}</a>
                                     @endfor
                                 </div>
@@ -219,7 +224,7 @@
                                 <a class="btn btn-primary" href="{{ route('steps.download', $export['key']) }}">Download CSV</a>
                             @endif
                         </div>
-                        <button class="btn start-live" id="confirm-import" type="button">Confirm import</button>
+                        <button class="btn start-live" id="confirm-import" type="button">{{ $serverUpload ? 'Confirm part 1' : 'Confirm import' }}</button>
                         @if (($export['key'] ?? '') === 'customers')
                             <a class="btn btn-primary" href="{{ route('user-fields.show', 'customers') }}">Choose SalesPad customer user fields</a>
                         @endif
@@ -251,7 +256,7 @@
                         <div id="step-downloads" class="step-downloads">
                             @if (($parts ?? 1) > 1)
                                 <div class="part-grid">
-                                    @for ($part = 1; $part <= $parts; $part++)
+                                    @for ($part = 1; $part <= ($serverUpload ? 1 : $parts); $part++)
                                         <a class="btn btn-primary" href="{{ route('steps.download', ['key' => $export['key'], 'part' => $part]) }}">Part {{ $part }}</a>
                                     @endfor
                                 </div>
@@ -356,7 +361,7 @@
                 var message = document.getElementById('confirm-message');
                 if (window.unlockCelebration) window.unlockCelebration();
                 button.disabled = true;
-                message.textContent = 'Asking Odoo if this import is there...';
+                message.textContent = @json($serverUpload ? 'Asking Odoo if part 1 uploaded...' : 'Asking Odoo if this import is there...');
                 try {
                     var response = await fetch(@json(route('steps.confirm', $export['key'])), {
                         method: 'POST',

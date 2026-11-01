@@ -249,23 +249,40 @@ class ApiUploadQueue
             $active = $this->unitIsActive((string) $plan['unit']);
             $waiting = in_array($key, $this->waitingKeys(), true);
             $finished = $last > 0 && $next > $last;
-            if (! $active && ! $waiting && ($finished || $next === 0)) {
+            $problem = trim((string) ($progress['error'] ?? ''));
+            $touched = strtotime((string) ($progress['at'] ?? ''));
+            $fresh = $touched !== false && $touched >= time() - 240;
+            $alive = $active || ($fresh && ! $finished);
+            if (! $alive && ! $waiting && ($finished || $next === 0)) {
                 continue;
             }
             $remaining = max(0, $last - $loaded);
+            $state = 'stopped';
+            if ($finished) {
+                $state = 'done';
+            } elseif ($alive && $problem !== '') {
+                $state = 'retrying';
+            } elseif ($alive) {
+                $state = 'running';
+            } elseif ($waiting) {
+                $state = 'waiting';
+            }
             $jobs[] = [
                 'key' => $key,
                 'title' => (string) $plan['title'],
-                'state' => $active ? 'running' : ($waiting ? 'waiting' : ($finished ? 'done' : 'stopped')),
+                'state' => $state,
                 'total' => $last,
                 'loaded' => $loaded,
                 'remaining' => $remaining,
-                'finish' => $this->finishAt($remaining, (int) $plan['batch'], (float) ($progress['seconds'] ?? 0)),
+                'finish' => $state === 'running'
+                    ? $this->finishAt($remaining, (int) $plan['batch'], (float) ($progress['seconds'] ?? 0))
+                    : '',
+                'note' => $state === 'retrying' ? 'Retrying. '.$problem : '',
             ];
         }
         $running = 0;
         foreach ($jobs as $job) {
-            if ($job['state'] === 'running') {
+            if ($job['state'] === 'running' || $job['state'] === 'retrying') {
                 $running++;
             }
         }
@@ -336,7 +353,7 @@ class ApiUploadQueue
         }
         $listed = trim((string) shell_exec("systemctl --user list-units 'odooexport-*.service' --state=active --no-legend --plain 2>/dev/null"));
         if ($listed === '') {
-            return $this->activeCache = [];
+            return $this->activeCache = $this->publishedUnits();
         }
         $names = [];
         foreach (preg_split('/\R/', $listed) ?: [] as $line) {
@@ -347,6 +364,28 @@ class ApiUploadQueue
         }
 
         return $this->activeCache = $names;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function publishedUnits(): array
+    {
+        $path = storage_path('app/transfer-active.json');
+        if (! is_file($path)) {
+            return [];
+        }
+        $decoded = json_decode((string) file_get_contents($path), true);
+        if (! is_array($decoded)) {
+            return [];
+        }
+        $touched = strtotime((string) ($decoded['at'] ?? ''));
+        if ($touched === false || $touched < time() - 180) {
+            return [];
+        }
+        $units = $decoded['units'] ?? [];
+
+        return array_values(array_filter(is_array($units) ? $units : [], 'is_string'));
     }
 
     private function unitIsActive(string $unit): bool

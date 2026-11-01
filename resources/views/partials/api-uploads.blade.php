@@ -27,6 +27,8 @@
                             <td>
                                 @if ($job['state'] === 'waiting')
                                     Only two jobs can run at a time
+                                @elseif ($job['state'] === 'retrying')
+                                    {{ $job['note'] !== '' ? $job['note'] : 'Retrying' }}
                                 @elseif (($job['finish'] ?? '') !== '')
                                     {{ $job['finish'] }}
                                 @elseif ($job['state'] === 'running' && (int) ($job['loaded'] ?? 0) === 0)
@@ -69,7 +71,9 @@
                     var row = document.createElement('tr');
                     var when = job.state === 'waiting'
                         ? 'Only two jobs can run at a time'
-                        : (job.finish ? job.finish : (job.state === 'running' ? (job.loaded ? 'Uploading' : 'Waiting for the other job') : 'Stopped'));
+                        : (job.state === 'retrying'
+                            ? (job.note || 'Retrying')
+                            : (job.finish ? job.finish : (job.state === 'running' ? (job.loaded ? 'Uploading' : 'Waiting for the other job') : 'Stopped')));
                     [job.title, number.format(job.loaded || 0), number.format(job.total || 0), number.format(job.remaining || 0), when]
                         .forEach(function (value) { row.appendChild(cell(value)); });
                     rows.appendChild(row);

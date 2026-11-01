@@ -82,7 +82,7 @@ class OdooClient
                 'mail_notrack' => true,
                 'import_file' => true,
             ]],
-        ], 90);
+        ], 180);
     }
 
     /**

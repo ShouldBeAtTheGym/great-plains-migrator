@@ -65,6 +65,8 @@ Route::middleware(['office.login', 'setup.ready'])->group(function () {
     Route::get('/salespeople/contacts', [SalespersonController::class, 'downloadContacts'])->name('salespeople.contacts');
     Route::get('/salespeople/employees', [SalespersonController::class, 'downloadEmployees'])->name('salespeople.employees');
     Route::get('/salespeople/download', [SalespersonController::class, 'download'])->name('salespeople.download');
+    Route::get('/employees/template', [CompanyRosterController::class, 'template'])->name('employees.template');
+    Route::post('/employees', [CompanyRosterController::class, 'store'])->name('employees.store');
     Route::get('/employees/departments', [CompanyRosterController::class, 'departments'])->name('employees.departments');
     Route::get('/employees/download', [CompanyRosterController::class, 'employees'])->name('employees.download');
     Route::post('/salespeople', [SalespersonController::class, 'update'])->name('salespeople.update');

@@ -3,31 +3,40 @@
 namespace App\Services;
 
 use App\Models\Company;
+use Illuminate\Support\Facades\Storage;
 use RuntimeException;
 
 class CompanyRoster
 {
     public function __construct(private OdooClient $odoo) {}
 
-    public function departments(): array
+    public function path(Company $company): string
     {
-        return [
-            ['id' => 'department_executive', 'name' => 'Executive', 'parent_id' => ''],
-            ['id' => 'department_finance', 'name' => 'Finance & Operations', 'parent_id' => 'department_executive'],
-            ['id' => 'department_sales', 'name' => 'Sales', 'parent_id' => 'department_executive'],
-            ['id' => 'department_marketing', 'name' => 'Marketing', 'parent_id' => 'department_executive'],
-            ['id' => 'department_product', 'name' => 'Product Development', 'parent_id' => 'department_executive'],
-            ['id' => 'department_warehouse', 'name' => 'Warehouse', 'parent_id' => 'department_finance'],
-            ['id' => 'department_accounting', 'name' => 'Accounting', 'parent_id' => 'department_finance'],
-            ['id' => 'department_it', 'name' => 'Information Technology', 'parent_id' => 'department_finance'],
-            ['id' => 'department_hr', 'name' => 'Human Resources', 'parent_id' => 'department_finance'],
-            ['id' => 'department_customer_experience', 'name' => 'Customer Experience', 'parent_id' => 'department_hr'],
-        ];
+        return Storage::disk('local')->path('rosters/'.$company->id.'.csv');
+    }
+
+    public function departments(Company $company): array
+    {
+        $seen = [];
+        foreach ($this->roster($company) as $person) {
+            $id = trim((string) ($person['department_id'] ?? ''));
+            if ($id === '' || isset($seen[$id])) {
+                continue;
+            }
+            $name = trim((string) ($person['department_name'] ?? ''));
+            $seen[$id] = [
+                'id' => $id,
+                'name' => $name !== '' ? $name : $this->departmentName($id),
+                'parent_id' => trim((string) ($person['department_parent_id'] ?? '')),
+            ];
+        }
+
+        return array_values($seen);
     }
 
     public function employees(Company $company): array
     {
-        $people = $this->managersFirst($this->roster());
+        $people = $this->managersFirst($this->roster($company));
         $users = $this->usersByEmail($company, array_column($people, 'email'));
         $existing = $this->existingEmployees($company);
         $used = [];
@@ -99,10 +108,24 @@ class CompanyRoster
         return ['company_id', trim((string) ($company->odoo_import_company_name ?: $company->odoo_company_name))];
     }
 
-    private function roster(): array
+    private function departmentName(string $id): string
     {
-        $path = resource_path('data/company_employees.csv');
+        $name = preg_replace('/^department_/', '', $id) ?? $id;
+        $name = str_replace('_', ' ', $name);
+
+        return ucwords($name);
+    }
+
+    private function roster(Company $company): array
+    {
+        $path = $this->path($company);
+        if (! is_file($path)) {
+            return [];
+        }
         $handle = fopen($path, 'r');
+        if ($handle === false) {
+            return [];
+        }
         $header = fgetcsv($handle) ?: [];
         $people = [];
         while (($line = fgetcsv($handle)) !== false) {

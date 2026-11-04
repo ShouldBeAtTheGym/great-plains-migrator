@@ -2,9 +2,12 @@
 
 namespace Tests\Unit;
 
+use App\Models\Company;
 use App\Services\ConversionPlanner;
 use App\Services\ExportCatalog;
 use App\Services\GpSync;
+use App\Services\OdooClient;
+use ReflectionMethod;
 use Tests\TestCase;
 
 class CrmExportTest extends TestCase
@@ -113,6 +116,21 @@ class CrmExportTest extends TestCase
 
         $this->assertStringContainsString('i.Assigned_To', $assigned);
         $this->assertStringContainsString("WHEN 'ANDY.FORTIER' THEN '300'", $assigned);
+    }
+
+    public function test_a_note_author_uses_the_staff_email_domain(): void
+    {
+        $odoo = $this->createMock(OdooClient::class);
+        $odoo->method('execute')->willReturn([
+            ['id' => 9, 'name' => 'Alex Example', 'email' => 'alex@customer.test'],
+            ['id' => 5, 'name' => 'Alex Example', 'email' => 'alex@example.com'],
+        ]);
+        $method = new ReflectionMethod(ExportCatalog::class, 'noteAuthorPartners');
+        $partners = $method->invoke(new ExportCatalog($odoo), new Company, [
+            ['display' => 'Alex Example', 'email' => 'sam@example.com'],
+        ]);
+
+        $this->assertSame(5, $partners['ALEX EXAMPLE']);
     }
 
     public function test_a_product_category_id_uses_the_casing_already_in_odoo(): void

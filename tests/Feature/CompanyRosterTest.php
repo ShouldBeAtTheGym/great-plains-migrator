@@ -4,18 +4,27 @@ namespace Tests\Feature;
 
 use App\Models\Company;
 use App\Models\User;
+use App\Services\CompanyRoster;
 use App\Services\OdooClient;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class CompanyRosterTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        Storage::fake('local');
+    }
+
     public function test_employee_file_links_an_existing_user_and_leaves_the_rest_blank(): void
     {
         $user = User::factory()->create();
-        Company::query()->create([
+        $company = Company::query()->create([
             'name' => 'Blue',
             'gp_tested_at' => now(),
             'odoo_tested_at' => now(),
@@ -23,6 +32,7 @@ class CompanyRosterTest extends TestCase
             'intro_open' => false,
             'odoo_import_company_name' => 'Howies Hockey Tape',
         ]);
+        $this->writeRoster($company);
         $this->mock(OdooClient::class, function ($mock) {
             $mock->shouldReceive('execute')->andReturnUsing(function ($company, string $model) {
                 if ($model === 'res.users') {
@@ -54,7 +64,7 @@ class CompanyRosterTest extends TestCase
     public function test_employee_file_updates_the_salesperson_employee_already_in_odoo(): void
     {
         $user = User::factory()->create();
-        Company::query()->create([
+        $company = Company::query()->create([
             'name' => 'Blue',
             'gp_tested_at' => now(),
             'odoo_tested_at' => now(),
@@ -62,6 +72,7 @@ class CompanyRosterTest extends TestCase
             'intro_open' => false,
             'odoo_import_company_name' => 'Howies Hockey Tape',
         ]);
+        $this->writeRoster($company);
         $this->mock(OdooClient::class, function ($mock) {
             $mock->shouldReceive('execute')->andReturnUsing(function ($company, string $model, string $method, array $args = []) {
                 if ($model === 'res.users') {
@@ -99,5 +110,71 @@ class CompanyRosterTest extends TestCase
         $csv = $employees->streamedContent();
         $this->assertStringContainsString('salesperson_employee_0004,"David Visser","Sales Director",dave@howieshockeytape.com,department_sales,emp_max_howieshockeytape_com,845,"Howies Hockey Tape"', $csv);
         $this->assertStringContainsString('emp_alyssa_howieshockeytape_com,"Alyssa Exline","Inside Sales & Account Manager - Canada",alyssa@howieshockeytape.com,department_sales,salesperson_employee_0004,,"Howies Hockey Tape"', $csv);
+    }
+
+    public function test_an_uploaded_employee_list_becomes_the_department_file(): void
+    {
+        $user = User::factory()->create();
+        Company::query()->create([
+            'name' => 'Next',
+            'gp_tested_at' => now(),
+            'odoo_tested_at' => now(),
+            'preflight_passed_at' => now(),
+            'intro_open' => false,
+            'odoo_import_company_name' => 'Next Company',
+        ]);
+
+        $page = $this->actingAs($user)->get(route('salespeople.show'));
+        $page->assertOk();
+        $page->assertSee('Upload employee list');
+        $page->assertSee('Download template');
+
+        $csv = <<<'CSV'
+external_id,name,job_title,email,manager_external_id,department_id,department_name,department_parent_id
+__import__.emp_ada_example_com,Ada Example,Sales Director,ada@example.com,,department_sales,Sales,department_executive
+CSV;
+        $upload = $this->actingAs($user)->post(route('employees.store'), [
+            'roster' => UploadedFile::fake()->createWithContent('people.csv', $csv),
+        ]);
+        $upload->assertRedirect();
+        $upload->assertSessionHas('status');
+
+        $departments = $this->actingAs($user)->get(route('employees.departments'));
+        $departments->assertOk();
+        $this->assertStringContainsString('department_sales,Sales,department_executive,"Next Company"', $departments->streamedContent());
+    }
+
+    public function test_a_company_without_an_uploaded_list_gets_no_employees(): void
+    {
+        $user = User::factory()->create();
+        Company::query()->create([
+            'name' => 'Next',
+            'gp_tested_at' => now(),
+            'odoo_tested_at' => now(),
+            'preflight_passed_at' => now(),
+            'intro_open' => false,
+            'odoo_import_company_name' => 'Next Company',
+        ]);
+
+        $employees = $this->actingAs($user)->get(route('employees.download'));
+        $employees->assertOk();
+        $csv = $employees->streamedContent();
+
+        $this->assertStringNotContainsString('howieshockeytape', $csv);
+        $this->assertStringNotContainsString('Sieplinga', $csv);
+    }
+
+    private function writeRoster(Company $company): void
+    {
+        $path = app(CompanyRoster::class)->path($company);
+        if (! is_dir(dirname($path))) {
+            mkdir(dirname($path), 0775, true);
+        }
+        file_put_contents($path, <<<'CSV'
+external_id,name,job_title,email,manager_external_id,department_id,department_name,department_parent_id
+__import__.emp_max_howieshockeytape_com,Max Sieplinga,CEO / Owner,max@howieshockeytape.com,,department_executive,Executive,
+__import__.emp_dave_howieshockeytape_com,David Visser,Sales Director,dave@howieshockeytape.com,__import__.emp_max_howieshockeytape_com,department_sales,Sales,department_executive
+__import__.emp_alyssa_howieshockeytape_com,Alyssa Exline,Inside Sales & Account Manager - Canada,alyssa@howieshockeytape.com,__import__.emp_dave_howieshockeytape_com,department_sales,Sales,department_executive
+CSV);
     }
 }

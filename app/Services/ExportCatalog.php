@@ -920,6 +920,18 @@ SQL);
             return [];
         }
 
+        $domains = [];
+        foreach ($salespadUsers as $user) {
+            if (! is_array($user)) {
+                continue;
+            }
+            $staffEmail = strtolower(trim((string) ($user['email'] ?? '')));
+            $staffDomain = substr(strrchr($staffEmail, '@') ?: '', 1);
+            if ($staffDomain !== '') {
+                $domains[$staffDomain] = true;
+            }
+        }
+
         try {
             $rows = $this->odoo->execute($company, 'res.partner', 'search_read', [[
                 ['name', 'in', array_values($names)],
@@ -938,7 +950,8 @@ SQL);
                 continue;
             }
             $email = strtolower(trim((string) ($row['email'] ?? '')));
-            if (! str_contains($email, '@howies')) {
+            $domain = substr(strrchr($email, '@') ?: '', 1);
+            if ($domains !== [] && ! isset($domains[$domain])) {
                 continue;
             }
             $name = strtoupper(trim((string) ($row['name'] ?? '')));

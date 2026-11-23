@@ -20,29 +20,11 @@
                 <div class="alert alert-bad">{{ $loadError }}</div>
             @endif
 
-            @if (($export['key'] ?? '') === 'customers')
+            @if (in_array(($export['key'] ?? ''), ['customers', 'products'], true))
                 <div class="card" style="margin-bottom:1rem;border:2px solid #0f766e;">
-                    <h3 style="margin-top:0;">SalesPad customer user fields</h3>
+                    <h3 style="margin-top:0;">SalesPad {{ $export['key'] === 'products' ? 'product' : 'customer' }} user fields</h3>
                     <p>Some of these fields are unused or disabled in SalesPad. Check the ones to move, pick Text, Selection, Yes / No, or Number, and for a selection type the choices separated by semicolons.</p>
-                    <a class="btn btn-primary" href="{{ route('user-fields.show', 'customers') }}">Choose SalesPad customer user fields</a>
-                </div>
-                <div class="card" style="margin-bottom:1rem;">
-                    <h3 style="margin-top:0;">Odoo company</h3>
-                    <p>Pick the company these customers belong to. After you save, the <strong>company_id</strong> column is that company name.</p>
-                    @if ($companyLoadError)
-                        <div class="alert alert-bad">{{ $companyLoadError }}</div>
-                    @endif
-                    <form method="post" action="{{ route('steps.import-company', 'customers') }}">
-                        @csrf
-                        <label for="odoo-import-company">Import into</label>
-                        <select class="field" id="odoo-import-company" name="odoo_import_company_id" style="max-width:28rem;">
-                            <option value="">Choose a company</option>
-                            @foreach ($odooCompanies as $row)
-                                <option value="{{ $row['id'] }}" @selected((int) $company->odoo_import_company_id === (int) $row['id'])>{{ $row['name'] }}</option>
-                            @endforeach
-                        </select>
-                        <button class="btn btn-primary" type="submit">Save company</button>
-                    </form>
+                    <a class="btn btn-primary" href="{{ route('user-fields.show', $export['key']) }}">Choose SalesPad {{ $export['key'] === 'products' ? 'product' : 'customer' }} user fields</a>
                 </div>
             @endif
             @if (!empty($export['before']))
@@ -168,8 +150,8 @@
                     <li><span>In Odoo, open <strong>{{ $guide['screen'] }}</strong>.@if (!empty($export['hint'])) @include('partials.hover-hint', ['label' => 'Do not see?', 'hint' => $export['hint'], 'callout' => true])@endif</span></li>
                     <li><span>On that list, open the gear menu and choose <strong>Import records</strong>. Upload the CSV.</span></li>
                     <li><span>Match each file column to the Odoo field in the column map. An orange “To import, select a field…” row is not a missing checklist step. Pick the field the map names, or <strong>Do not import</strong> when the map says so. Set every column that starts with <strong>gp_</strong> to <strong>Do not import</strong>, even if Odoo guessed a field.</span></li>
-                    @if (($export['key'] ?? '') === 'customers' && count($odooCompanies ?? []) > 1)
-                        <li><span>@include('partials.several-companies-note', ['chosenCompany' => $company->odoo_import_company_name])</span></li>
+                    @if (($export['key'] ?? '') === 'customers')
+                        <li><span>@include('partials.several-companies-note')</span></li>
                     @elseif (($export['key'] ?? '') === 'customers')
                         <li><span>On the row <strong>x_gp_customer_number</strong>, choose <strong>Customer Number</strong>. Do not send the customer number to Reference. On the row <strong>x_gp_customer_class</strong>, choose <strong>Customer Class</strong>. On the row <strong>x_gp_shipping_method</strong>, choose <strong>Shipping Method</strong>. Those two lists are the distinct values from Great Plains.</span></li>
                     @endif
@@ -177,7 +159,7 @@
                         <li><span>On the row <strong>x_gp_customer_number</strong>, choose <strong>Customer Number</strong>. Do not send the vendor id to Reference.</span></li>
                     @endif
                     @if (($export['key'] ?? '') === 'customer_price_lists')
-                        <li><span>Import customers and products first. On <strong>company_id</strong>, choose <strong>Company</strong>. On <strong>item_ids/applied_on</strong>, choose <strong>Do not import</strong>. Odoo sets Apply On to Product from the product column, and that field is not in the import list. On <strong>item_ids/product_tmpl_id/id</strong>, choose <strong>Pricelist Rules / Product / External ID</strong>. That is the product imported earlier, <strong>__import__.product_</strong> plus the item number. On <strong>item_ids/compute_price</strong>, choose <strong>Pricelist Rules / Compute Price</strong>. The value <strong>fixed</strong> means Fixed Price. On <strong>item_ids/fixed_price</strong>, choose <strong>Pricelist Rules / Fixed Price</strong>. Archived products are left out.</span></li>
+                        <li><span>Import customers and products first. On <strong>company_id</strong>, choose <strong>Company</strong>. On <strong>item_ids/applied_on</strong>, choose <strong>Do not import</strong>. Odoo sets Apply On to Product from the product column, and that field is not in the import list. On <strong>item_ids/product_tmpl_id/id</strong>, choose <strong>Pricelist Rules / Product / External ID</strong>. That is the product imported earlier. When both companies describe the item the same way, the id is <strong>__import__.product_</strong> plus the item number. When the descriptions differ, it is <strong>__import__.product_blu2_</strong> or <strong>__import__.product_blue_</strong> plus the item number. On <strong>item_ids/compute_price</strong>, choose <strong>Pricelist Rules / Compute Price</strong>. The value <strong>fixed</strong> means Fixed Price. On <strong>item_ids/fixed_price</strong>, choose <strong>Pricelist Rules / Fixed Price</strong>. Archived products are left out.</span></li>
                     @endif
                     @if (($export['key'] ?? '') === 'customer_price_assign')
                         <li><span>If Odoo says a pricelist was not found, download the price lists that are not in Odoo yet. Import that small file on <strong>Sales → Products → Pricelists</strong>, using the same column map as the full price list file. Then come back to this file.</span></li>
@@ -197,7 +179,7 @@
                         <li><span>Import the warehouses first. On <strong>location_id</strong>, choose <strong>Parent Location</strong>. The value is the warehouse short name and /Stock, such as US/Stock. If <strong>Locations</strong> is not in the menu, go to <strong>Inventory → Configuration → Settings</strong>. Under <strong>Warehouse</strong>, check <strong>Storage Locations</strong> and click <strong>Save</strong>.</span></li>
                     @endif
                     @if (($export['key'] ?? '') === 'inventory_on_hand')
-                        <li><span>On <strong>product_id/id</strong>, choose <strong>Product / External ID</strong>. The value starts with <strong>__import__.product_variant_</strong>. On <strong>location_id</strong>, choose <strong>Do not import</strong>. That cell is the bin name, such as <strong>US/Stock/PICK ROOM</strong>. On <strong>location_id/id</strong>, choose <strong>Location / External ID</strong>. Odoo rejects the row when both the location name and the location external id are mapped. On <strong>gp_qty_allocated</strong>, choose <strong>Do not import</strong>. After the import, click <strong>Apply All</strong>. That writes the counted quantity into On Hand. Until then, On Hand stays at zero.</span></li>
+                        <li><span>On <strong>product_id/id</strong>, choose <strong>Product / External ID</strong>. The value starts with <strong>__import__.product_variant_</strong>. On <strong>gp_location</strong>, choose <strong>Do not import</strong>. That cell is the bin name, such as <strong>Blueoco_CHAR/Stock/STOCK</strong>. On <strong>location_id/id</strong>, choose <strong>Location / External ID</strong>. Odoo rejects the row when both the location name and the location external id are mapped. On <strong>gp_qty_allocated</strong>, choose <strong>Do not import</strong>. After the import, click <strong>Apply All</strong>. That writes the counted quantity into On Hand. Until then, On Hand stays at zero.</span></li>
                     @endif
                     @if (($export['key'] ?? '') === 'products')
                         <li><span>Great Plains kits are left out. A kit is not stock. It points at the other products that go in the box. Odoo can do that later with a Kit bill of materials in Manufacturing, after the real products are imported. Do not add the kits as normal products.</span></li>
@@ -218,15 +200,15 @@
                                         <a class="btn btn-primary" href="{{ route('steps.download', ['key' => $export['key'], 'part' => $part]) }}">Part {{ $part }}</a>
                                     @endfor
                                 </div>
-                            @elseif (($export['key'] ?? '') === 'customers' && count($odooCompanies ?? []) > 1)
-                                <button class="btn btn-primary" id="download-csv" type="button">Download CSV</button>
+                            @elseif (($export['key'] ?? '') === 'customers')
+                                <a class="btn btn-primary" href="{{ route('steps.download', 'customers') }}">Download CSV</a>
                             @else
                                 <a class="btn btn-primary" href="{{ route('steps.download', $export['key']) }}">Download CSV</a>
                             @endif
                         </div>
                         <button class="btn start-live" id="confirm-import" type="button">{{ $serverUpload ? 'Confirm part 1' : 'Confirm import' }}</button>
-                        @if (($export['key'] ?? '') === 'customers')
-                            <a class="btn btn-primary" href="{{ route('user-fields.show', 'customers') }}">Choose SalesPad customer user fields</a>
+                        @if (in_array(($export['key'] ?? ''), ['customers', 'products'], true))
+                            <a class="btn btn-primary" href="{{ route('user-fields.show', $export['key']) }}">Choose SalesPad {{ $export['key'] === 'products' ? 'product' : 'customer' }} user fields</a>
                         @endif
                         <a class="btn btn-ghost" href="{{ route('dashboard') }}">Back to checklist</a>
                     </div>
@@ -321,36 +303,6 @@
             @endif
         </div>
     </div>
-    @if (($export['key'] ?? '') === 'customers' && count($odooCompanies ?? []) > 1 && $current)
-        <div id="company-download-modal" class="office-modal" hidden>
-            <div class="office-modal-backdrop" data-close-company-note></div>
-            <div class="office-modal-card" role="dialog" aria-modal="true" aria-labelledby="company-download-heading">
-                <h2 id="company-download-heading">Choose these fields</h2>
-                <p>@include('partials.several-companies-note', ['chosenCompany' => $company->odoo_import_company_name])</p>
-                @if ($company->odoo_import_company_name)
-                    <a class="btn btn-primary" href="{{ route('steps.download', 'customers') }}">Download CSV</a>
-                @endif
-                <button class="btn btn-ghost" type="button" data-close-company-note>Close</button>
-            </div>
-        </div>
-        <script>
-            (function () {
-                var modal = document.getElementById('company-download-modal');
-                var open = document.getElementById('download-csv');
-                if (!modal || !open) {
-                    return;
-                }
-                open.addEventListener('click', function () {
-                    modal.hidden = false;
-                });
-                modal.addEventListener('click', function (event) {
-                    if (event.target.closest('[data-close-company-note]')) {
-                        modal.hidden = true;
-                    }
-                });
-            })();
-        </script>
-    @endif
     @if ($step->isComplete())
         @include('partials.recheck-modal')
     @endif

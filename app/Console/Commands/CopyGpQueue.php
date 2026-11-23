@@ -63,9 +63,18 @@ class CopyGpQueue extends Command
 
     private function exportMtime(): int
     {
-        clearstatcache(true, base_path('legacy/includes/exports.php'));
+        $latest = 0;
+        foreach ([
+            base_path('legacy/includes/exports.php'),
+            app_path('Services/ExportCatalog.php'),
+            app_path('Services/CompanyMerge.php'),
+            app_path('Services/GpCopyService.php'),
+        ] as $file) {
+            clearstatcache(true, $file);
+            $latest = max($latest, (int) (@filemtime($file) ?: 0));
+        }
 
-        return (int) (@filemtime(base_path('legacy/includes/exports.php')) ?: 0);
+        return $latest;
     }
 
     private function listenForStop(): void

@@ -19,6 +19,8 @@ class GpCopyService
         private ExportCatalog $catalog,
         private GpConnection $gp,
         private InteractionLog $interactions,
+        private CompanyMerge $merge,
+        private OdooClient $odoo,
     ) {}
 
     public function snapshot(Company $company, string $key): array
@@ -106,8 +108,9 @@ class GpCopyService
         if (! $copy) {
             return;
         }
-        if ($this->processAlive((int) $copy->pid)) {
-            $this->stopProcess((int) $copy->pid);
+        $pid = (int) $copy->pid;
+        if ($this->processAlive($pid) && ! $this->workerOwns($pid)) {
+            $this->stopProcess($pid);
         }
         $copy->update([
             'status' => 'pending',
@@ -306,6 +309,10 @@ class GpCopyService
                 continue;
             }
             if ($copy->status === 'running') {
+                if ((int) $copy->pid === getmypid()) {
+                    return $key;
+                }
+
                 return $this->stillRunning($copy) ? null : $key;
             }
             if ($copy->status === 'failed' && $copy->finished_at && $copy->finished_at->greaterThan(now()->subMinutes(10))) {
@@ -421,17 +428,27 @@ class GpCopyService
                 return;
             }
 
-            $export = $this->catalog->prepare($company, $export);
-            $connection = $this->gp->connect($company);
-            $export = $this->catalog->assignCrmEventUsers($company, $connection, $export);
-            $export = $this->catalog->assignCrmNoteAuthors($company, $connection, $export);
-            $export = $this->catalog->assignCrmInteractionAuthors($company, $connection, $export);
-            $export = $this->catalog->attachPartnerResIds($company, $connection, $export);
-            $export = $this->catalog->omitCustomersNotInOdoo($company, $connection, $export);
-            $hash = $this->fingerprint($export);
-
-            $countRows = $this->gp->rows($connection, $export['count_sql'], 1);
-            $total = isset($countRows[0]['c']) ? (int) $countRows[0]['c'] : 0;
+            $base = $this->catalog->prepare($company, $export);
+            $this->merge->load($company);
+            if ($key === 'products') {
+                $this->merge->resetProductBarcodes();
+            }
+            $hash = $this->fingerprint($base);
+            $total = 0;
+            foreach ($this->merge->sources() as $source) {
+                $connection = $this->gp->connectDatabase($company, $source['database']);
+                try {
+                    $counted = $this->catalog->bindItemUserFields($company, $base, $connection);
+                    $counted = $this->catalog->withoutMissingProspectColumns($connection, $counted);
+                    $countRows = $this->gp->rows($connection, $counted['count_sql'], 1);
+                    $total += isset($countRows[0]['c']) ? (int) $countRows[0]['c'] : 0;
+                } finally {
+                    if (is_resource($connection)) {
+                        sqlsrv_close($connection);
+                    }
+                    $connection = null;
+                }
+            }
             $copy->update([
                 'record_count' => $total,
                 'source_hash' => $hash,
@@ -441,65 +458,93 @@ class GpCopyService
                 return;
             }
 
-            $statement = $this->catalog->open($connection, $export);
-            $headers = array_values(array_filter(
-                array_map(
-                    static fn ($field) => $field['Name'],
-                    sqlsrv_field_metadata($statement) ?: []
-                ),
-                static fn ($name) => $name !== 'export_part_row' && ! in_array(strtolower((string) $name), ['note_log', 'customer_key'], true)
-            ));
-            foreach (array_keys($export['extra'] ?? []) as $name) {
-                $headers[] = $name;
-            }
-            $copy->update(['columns' => $headers]);
-
             $processed = 0;
             $saved = 0;
             $batch = [];
             $problems = [];
             $problemNo = 0;
+            $headers = null;
             $label = $total === 0 ? 'No rows' : 'Reading rows';
-            while ($row = sqlsrv_fetch_array($statement, SQLSRV_FETCH_ASSOC)) {
-                $processed++;
-                $problem = $this->problemFor($row, $export);
-                if ($problem !== null) {
-                    $problemNo++;
-                    $label = $problem[0] !== '' ? $problem[0] : $label;
-                    $problems[] = [
-                        'company_id' => $company->id,
-                        'export_key' => $this->problemKey($key),
-                        'row_no' => $problemNo,
-                        'record_key' => mb_substr($problem[0], 0, 180),
-                        'payload' => json_encode($problem, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE),
-                    ];
-                    if (count($problems) >= self::BATCH && ! $this->flushProblems($copy, $token, $problems, $processed, $saved, $label)) {
-                        return;
+            foreach ($this->merge->sources() as $source) {
+                $connection = $this->gp->connectDatabase($company, $source['database']);
+                $export = $this->catalog->assignCrmEventUsers($company, $connection, $base);
+                $export = $this->catalog->assignCrmNoteAuthors($company, $connection, $export);
+                $export = $this->catalog->assignCrmInteractionAuthors($company, $connection, $export);
+                $export = $this->catalog->withoutMissingUserColumns($connection, $export);
+                $export = $this->catalog->withoutMissingProspectColumns($connection, $export);
+                $export = $this->catalog->attachPartnerResIds($company, $connection, $export);
+                $export = $this->catalog->omitCustomersNotInOdoo($company, $connection, $export);
+                $statement = $this->catalog->open($connection, $export);
+                if ($headers === null) {
+                    $headers = array_values(array_filter(
+                        array_map(
+                            static fn ($field) => $field['Name'],
+                            sqlsrv_field_metadata($statement) ?: []
+                        ),
+                        static fn ($name) => $name !== 'export_part_row' && ! in_array(strtolower((string) $name), ['note_log', 'customer_key'], true)
+                    ));
+                    foreach (array_keys($export['extra'] ?? []) as $name) {
+                        $headers[] = $name;
                     }
-                    if (count($problems) >= self::BATCH) {
-                        $problems = [];
+                    if (in_array($key, ['warehouses', 'stock_locations'], true) && ! in_array('company_id/id', $headers, true)) {
+                        $headers[] = 'company_id/id';
                     }
-
-                    continue;
+                    if ($this->merge->stamps($key) && ! in_array($key, ['warehouses', 'stock_locations'], true) && ! in_array('company_id', $headers, true)) {
+                        $headers[] = 'company_id';
+                    }
+                    $copy->update(['columns' => $headers]);
                 }
-                $pieces = $key === 'customer_interactions' ? $this->interactions->rows($row) : [$row];
-                foreach ($pieces as $piece) {
-                    if ($key === 'customer_crm_events') {
-                        $piece = $this->attachEventCustomer($piece, $export);
-                    }
-                    $line = $this->lineFrom($piece, $headers, $export);
-                    if ($line === null) {
+                while ($row = sqlsrv_fetch_array($statement, SQLSRV_FETCH_ASSOC)) {
+                    $processed++;
+                    $row = $this->merge->apply($key, $row, $source);
+                    if ($row === null) {
                         continue;
                     }
-                    $saved++;
-                    $label = $this->recordLabel($piece);
-                    $batch[] = [
-                        'company_id' => $company->id,
-                        'export_key' => $key,
-                        'row_no' => $saved,
-                        'record_key' => mb_substr($label, 0, 180),
-                        'payload' => json_encode($line, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE),
-                    ];
+                    $problem = $this->problemFor($row, $export);
+                    if ($problem !== null) {
+                        $problemNo++;
+                        $label = $problem[0] !== '' ? $problem[0] : $label;
+                        $problems[] = [
+                            'company_id' => $company->id,
+                            'export_key' => $this->problemKey($key),
+                            'row_no' => $problemNo,
+                            'record_key' => mb_substr($problem[0], 0, 180),
+                            'payload' => json_encode($problem, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE),
+                        ];
+                        if (count($problems) >= self::BATCH && ! $this->flushProblems($copy, $token, $problems, $processed, $saved, $label)) {
+                            return;
+                        }
+                        if (count($problems) >= self::BATCH) {
+                            $problems = [];
+                        }
+
+                        continue;
+                    }
+                    $pieces = $key === 'customer_interactions' ? $this->interactions->rows($row) : [$row];
+                    foreach ($pieces as $piece) {
+                        if ($key === 'customer_crm_events') {
+                            $piece = $this->attachEventCustomer($piece, $export);
+                        }
+                        $line = $this->lineFrom($piece, $headers, $export);
+                        if ($line === null) {
+                            continue;
+                        }
+                        $saved++;
+                        $label = $this->recordLabel($piece);
+                        $batch[] = [
+                            'company_id' => $company->id,
+                            'export_key' => $key,
+                            'row_no' => $saved,
+                            'record_key' => mb_substr($label, 0, 180),
+                            'payload' => json_encode($line, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE),
+                        ];
+                        if (count($batch) >= self::BATCH && ! $this->flushBatch($copy, $token, $batch, $processed, $saved, $label)) {
+                            return;
+                        }
+                        if (count($batch) >= self::BATCH) {
+                            $batch = [];
+                        }
+                    }
                     if (count($batch) >= self::BATCH && ! $this->flushBatch($copy, $token, $batch, $processed, $saved, $label)) {
                         return;
                     }
@@ -507,27 +552,28 @@ class GpCopyService
                         $batch = [];
                     }
                 }
-                if (count($batch) >= self::BATCH && ! $this->flushBatch($copy, $token, $batch, $processed, $saved, $label)) {
+                if ($problems !== [] && ! $this->flushProblems($copy, $token, $problems, $processed, $saved, $label)) {
                     return;
                 }
-                if (count($batch) >= self::BATCH) {
-                    $batch = [];
+                if ($batch !== [] && ! $this->flushBatch($copy, $token, $batch, $processed, $saved, $label)) {
+                    return;
                 }
+                $problems = [];
+                $batch = [];
+                sqlsrv_free_stmt($statement);
+                sqlsrv_close($connection);
+                $connection = null;
             }
-            if ($problems !== [] && ! $this->flushProblems($copy, $token, $problems, $processed, $saved, $label)) {
-                return;
+            if ($headers === null) {
+                $headers = [];
             }
-            if ($batch !== [] && ! $this->flushBatch($copy, $token, $batch, $processed, $saved, $label)) {
-                return;
-            }
-            sqlsrv_free_stmt($statement);
 
             if (! $this->owns($copy, $token)) {
                 return;
             }
             $copy->update([
                 'status' => 'complete',
-                'record_count' => $key === 'customer_interactions' ? $saved : max($total, $processed),
+                'record_count' => $saved,
                 'processed_count' => $processed,
                 'saved_count' => $saved,
                 'current_record' => $saved === 0 ? 'No rows' : $label,
@@ -579,12 +625,15 @@ class GpCopyService
             ->limit($limit)
             ->get();
 
+        $productColumns = $this->productColumns($headers);
+        $knownProducts = $productColumns === [] ? [] : $this->knownProducts($company);
         $sample = [];
         foreach ($rows as $row) {
             $values = json_decode((string) $row->payload, true);
             if (! is_array($values)) {
                 continue;
             }
+            $values = $this->rewriteProducts($values, $productColumns, $knownProducts);
             $line = [];
             foreach ($headers as $index => $name) {
                 $line[$name] = (string) ($values[$index] ?? '');
@@ -608,6 +657,8 @@ class GpCopyService
             $query->whereBetween('row_no', [$from, $to]);
         }
 
+        $productColumns = $this->productColumns($headers);
+        $knownProducts = $productColumns === [] ? [] : $this->knownProducts($company);
         $out = fopen('php://output', 'w');
         fwrite($out, "\xEF\xBB\xBF");
         fputcsv($out, $headers);
@@ -618,6 +669,7 @@ class GpCopyService
             if (! is_array($line)) {
                 continue;
             }
+            $line = $this->rewriteProducts($line, $productColumns, $knownProducts);
             fputcsv($out, $line);
             if (++$written % 500 === 0) {
                 fflush($out);
@@ -776,6 +828,52 @@ class GpCopyService
     /**
      * @return array{0: int, 1: int}
      */
+    /**
+     * @param  list<string>  $headers
+     * @return list<int>
+     */
+    private function productColumns(array $headers): array
+    {
+        $indexes = [];
+        foreach ($headers as $index => $name) {
+            if ($name === 'product_id/id' || str_ends_with((string) $name, '/product_id/id')) {
+                $indexes[] = (int) $index;
+            }
+        }
+
+        return $indexes;
+    }
+
+    /**
+     * @return array<string, true>
+     */
+    private function knownProducts(Company $company): array
+    {
+        try {
+            return $this->odoo->externalIdNameSet($company, 'product.product', 'product_variant_');
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
+    /**
+     * @param  list<string>  $line
+     * @param  list<int>  $columns
+     * @param  array<string, true>  $known
+     * @return list<string>
+     */
+    private function rewriteProducts(array $line, array $columns, array $known): array
+    {
+        if ($known === [] || $columns === []) {
+            return $line;
+        }
+        foreach ($columns as $index) {
+            $line[$index] = $this->odoo->resolveProductVariant((string) ($line[$index] ?? ''), $known);
+        }
+
+        return $line;
+    }
+
     public function partBounds(int $part): array
     {
         $part = max(1, $part);
@@ -948,6 +1046,13 @@ class GpCopyService
         }
 
         return function_exists('posix_get_last_error') && posix_get_last_error() === 1;
+    }
+
+    private function workerOwns(int $pid): bool
+    {
+        $command = @file_get_contents('/proc/'.$pid.'/cmdline');
+
+        return is_string($command) && str_contains($command, 'gp:copy-queue');
     }
 
     private function stopProcess(int $pid): void

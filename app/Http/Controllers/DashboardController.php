@@ -7,7 +7,9 @@ use App\Models\ConversionStep;
 use App\Services\ApiUploadQueue;
 use App\Services\ConversionPlanner;
 use App\Services\ExportCatalog;
+use App\Services\GpConnection;
 use App\Services\GpCopyService;
+use App\Services\OdooClient;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
@@ -15,7 +17,7 @@ use RuntimeException;
 
 class DashboardController extends Controller
 {
-    public function __invoke(ExportCatalog $catalog, ConversionPlanner $planner, GpCopyService $copies, ApiUploadQueue $uploads): View
+    public function __invoke(ExportCatalog $catalog, ConversionPlanner $planner, GpCopyService $copies, ApiUploadQueue $uploads, GpConnection $gp, OdooClient $odoo): View
     {
         $company = Company::current();
         $savedKeys = $company->steps()->pluck('export_key')->all();
@@ -65,7 +67,48 @@ class DashboardController extends Controller
             'countError' => $countError,
             'queue' => $copies->catalogQueue($company),
             'uploads' => $uploads->status(),
+            'gpCompanies' => $gp->companyList($company),
+            'odooCompanies' => $this->odooCompanies($company, $odoo),
         ]);
+    }
+
+    /**
+     * @return list<array{name: string, parent: string}>
+     */
+    private function odooCompanies(Company $company, OdooClient $odoo): array
+    {
+        $fallback = $company->odoo_company_name
+            ? [['name' => $company->odoo_company_name, 'parent' => '']]
+            : [];
+        try {
+            $rows = $odoo->companies($company);
+        } catch (RuntimeException) {
+            return $fallback;
+        }
+
+        $list = [];
+        foreach (is_array($rows) ? $rows : [] as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $name = trim((string) ($row['name'] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+            $parent = is_array($row['parent_id'] ?? null) ? trim((string) ($row['parent_id'][1] ?? '')) : '';
+            $list[] = ['name' => $name, 'parent' => $parent];
+        }
+        usort($list, function (array $left, array $right): int {
+            $leftBranch = $left['parent'] !== '' ? 1 : 0;
+            $rightBranch = $right['parent'] !== '' ? 1 : 0;
+            if ($leftBranch !== $rightBranch) {
+                return $leftBranch <=> $rightBranch;
+            }
+
+            return strcasecmp($left['name'], $right['name']);
+        });
+
+        return $list !== [] ? $list : $fallback;
     }
 
     public function uploads(ApiUploadQueue $uploads): JsonResponse

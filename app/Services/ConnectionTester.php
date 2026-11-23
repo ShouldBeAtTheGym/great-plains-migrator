@@ -53,7 +53,7 @@ class ConnectionTester
             'gp_phone' => $profile['phone'] ?: null,
             'gp_version' => $profile['version'] ?: null,
             'gp_currency' => $profile['currency'] ?: null,
-            'name' => $profile['site_name'] ?: ($profile['name'] ?: $company->name),
+            'name' => $profile['name'] ?: ($profile['site_name'] ?: $company->name),
         ]);
 
         if ($report['installed']) {

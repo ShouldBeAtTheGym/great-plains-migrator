@@ -31,6 +31,14 @@ class ProspectExportTest extends TestCase
 
         $this->assertStringContainsString('spvProspect', $prospectsExport['sql']);
         $this->assertStringContainsString("xLast_Contacted >= '2026-01-01'", $prospectsExport['sql']);
+        $adapted = $catalog->prospectSql($prospectsExport['sql'], ['Prospect_ID', 'Prospect_Class', 'Historical'], ['Contact_ID']);
+        $this->assertStringNotContainsString('xLast_Contacted', $adapted);
+        $this->assertStringContainsString('ISNULL(p.Historical, 0) = 0', $adapted);
+        $this->assertStringContainsString('p.Prospect_Class', $adapted);
+        $this->assertStringNotContainsString('p.xClass', $adapted);
+        $kept = $catalog->prospectSql($prospectsExport['sql'], ['xLast_Contacted', 'xClass', 'Historical'], ['xTitle']);
+        $this->assertStringContainsString("xLast_Contacted >= '2026-01-01'", $kept);
+        $this->assertStringContainsString('p.xClass', $kept);
         $this->assertStringContainsString('ISNULL(p.Historical, 0) = 0', $prospectsExport['sql']);
         $this->assertStringContainsString('spvProspectContact', $prospectsExport['sql']);
         $this->assertStringContainsString('ct.Prospect_ID = p.Prospect_ID', $prospectsExport['sql']);

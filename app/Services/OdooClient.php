@@ -41,7 +41,7 @@ class OdooClient
     public function companies(Company $company): array
     {
         return $this->execute($company, 'res.company', 'search_read', [[]], [
-            'fields' => ['name', 'email', 'phone', 'street', 'city', 'zip', 'country_id', 'currency_id'],
+            'fields' => ['name', 'parent_id', 'email', 'phone', 'street', 'city', 'zip', 'country_id', 'currency_id'],
             'limit' => 5,
         ]);
     }
@@ -64,8 +64,9 @@ class OdooClient
     /**
      * @param  list<string>  $fields
      * @param  list<list<string>>  $rows
+     * @param  array<string, mixed>  $context
      */
-    public function load(Company $company, string $model, array $fields, array $rows): mixed
+    public function load(Company $company, string $model, array $fields, array $rows, array $context = []): mixed
     {
         $uid = $this->authenticate($company);
 
@@ -76,12 +77,12 @@ class OdooClient
             $model,
             'load',
             [$fields, $rows],
-            ['context' => [
+            ['context' => array_merge([
                 'tracking_disable' => true,
                 'mail_create_nolog' => true,
                 'mail_notrack' => true,
                 'import_file' => true,
-            ]],
+            ], $context)],
         ], 180);
     }
 
@@ -124,6 +125,26 @@ class OdooClient
         } while (count($rows) === 2000);
 
         return $names;
+    }
+
+    /**
+     * @param  array<string, true>  $known
+     */
+    public function resolveProductVariant(string $value, array $known): string
+    {
+        if ($value === '') {
+            return '';
+        }
+        $name = preg_replace('/^__import__\./', '', $value) ?? $value;
+        if (isset($known[$name])) {
+            return '__import__.'.$name;
+        }
+        $shared = preg_replace('/^product_variant_(?:blu2|blue)_/', 'product_variant_', $name) ?? $name;
+        if ($shared !== $name && isset($known[$shared])) {
+            return '__import__.'.$shared;
+        }
+
+        return '';
     }
 
     public function findExternalIds(Company $company, array $models, array $names): array
@@ -209,6 +230,73 @@ class OdooClient
         }
 
         return array_merge($rows, is_array($split) ? $split : []);
+    }
+
+    /**
+     * @param  list<string>  $values
+     */
+    public function addSelectionValues(Company $company, string $model, string $field, array $values): int
+    {
+        $values = array_values(array_unique(array_filter(array_map(
+            static fn ($value) => trim((string) $value),
+            $values
+        ), static fn (string $value) => $value !== '')));
+        if ($values === []) {
+            return 0;
+        }
+
+        $fields = $this->execute($company, 'ir.model.fields', 'search_read', [[
+            ['model', '=', $model],
+            ['name', '=', $field],
+        ]], ['fields' => ['id'], 'limit' => 1]);
+        $fieldId = is_array($fields) ? (int) ($fields[0]['id'] ?? 0) : 0;
+        if ($fieldId === 0) {
+            return 0;
+        }
+
+        $rows = $this->execute($company, 'ir.model.fields.selection', 'search_read', [[
+            ['field_id', '=', $fieldId],
+        ]], ['fields' => ['value', 'sequence'], 'limit' => 1000]);
+        $have = [];
+        $sequence = 0;
+        foreach (is_array($rows) ? $rows : [] as $row) {
+            $have[trim((string) ($row['value'] ?? ''))] = true;
+            $sequence = max($sequence, (int) ($row['sequence'] ?? 0));
+        }
+
+        $commands = [];
+        foreach ($values as $value) {
+            if (isset($have[$value])) {
+                continue;
+            }
+            $sequence += 10;
+            $commands[] = [0, 0, ['value' => $value, 'name' => $value, 'sequence' => $sequence]];
+            $have[$value] = true;
+        }
+        if ($commands === []) {
+            return 0;
+        }
+
+        try {
+            $this->execute($company, 'ir.model.fields', 'write', [[$fieldId], [
+                'selection_ids' => $commands,
+            ]]);
+
+            return count($commands);
+        } catch (RuntimeException) {
+            $added = 0;
+            foreach ($commands as $command) {
+                try {
+                    $this->execute($company, 'ir.model.fields', 'write', [[$fieldId], [
+                        'selection_ids' => [$command],
+                    ]]);
+                    $added++;
+                } catch (RuntimeException) {
+                }
+            }
+
+            return $added;
+        }
     }
 
     private function rpc(Company $company, string $service, string $method, array $args, int $timeout = 25): mixed

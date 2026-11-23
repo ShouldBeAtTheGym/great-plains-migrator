@@ -23,7 +23,7 @@
                         <a class="btn btn-primary" href="{{ route('salespeople.employees') }}">Download employees</a>
                     </div>
                 @endif
-                <p>This list is only Great Plains ids that are on an open order. Posted history is left off.</p>
+                <p>This list is the salespeople on open orders in both Blueoco and Geckobrands. The same id in both companies is one row, and the open-order count is the two companies added together. Posted history is left off.</p>
                 <p>Leave a row on <strong>No salesperson</strong> when that id is a show, a house account, or EDI. Those orders import with no salesperson.</p>
                 <p><a class="btn btn-ghost" href="{{ route('dashboard') }}">Back to checklist</a></p>
             </div>

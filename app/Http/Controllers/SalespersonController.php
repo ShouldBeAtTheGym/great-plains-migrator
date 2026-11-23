@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Company;
 use App\Models\SalespersonLink;
+use App\Services\CompanyMerge;
 use App\Services\ExportCatalog;
 use App\Services\GpConnection;
 use App\Services\OdooClient;
@@ -23,14 +24,7 @@ class SalespersonController extends Controller
         $users = [];
 
         try {
-            $connection = $gp->connect($company);
-            try {
-                $people = $this->people($gp->rows($connection, $this->salespersonSql()));
-            } finally {
-                if (is_resource($connection)) {
-                    sqlsrv_close($connection);
-                }
-            }
+            $people = $this->loadPeople($gp, $company);
             $users = $this->users($odoo, $company);
         } catch (RuntimeException $exception) {
             $loadError = $exception->getMessage();
@@ -165,14 +159,7 @@ class SalespersonController extends Controller
     {
         $company = Company::current();
         try {
-            $connection = $gp->connect($company);
-            try {
-                $people = $this->people($gp->rows($connection, $this->salespersonSql()));
-            } finally {
-                if (is_resource($connection)) {
-                    sqlsrv_close($connection);
-                }
-            }
+            $people = $this->loadPeople($gp, $company);
         } catch (RuntimeException $exception) {
             return redirect()->route('salespeople.show')->with('error', $exception->getMessage());
         }
@@ -243,6 +230,56 @@ class SalespersonController extends Controller
             'Content-Type' => 'text/csv; charset=UTF-8',
             'Cache-Control' => 'no-store',
         ]);
+    }
+
+    /**
+     * @return list<array{id: string, name: string, email: string, inactive: bool, orders: int}>
+     */
+    private function loadPeople(GpConnection $gp, Company $company): array
+    {
+        $merged = [];
+        $failure = null;
+        $loaded = false;
+        foreach (app(CompanyMerge::class)->sources() as $source) {
+            try {
+                $connection = $gp->connectDatabase($company, $source['database']);
+            } catch (RuntimeException $exception) {
+                $failure = $exception;
+                continue;
+            }
+            try {
+                foreach ($this->people($gp->rows($connection, $this->salespersonSql())) as $person) {
+                    $loaded = true;
+                    $id = $person['id'];
+                    if (! isset($merged[$id])) {
+                        $merged[$id] = $person;
+                        continue;
+                    }
+                    $merged[$id]['orders'] += $person['orders'];
+                    if ($merged[$id]['name'] === $id && $person['name'] !== $id) {
+                        $merged[$id]['name'] = $person['name'];
+                    }
+                    if ($merged[$id]['email'] === '' && $person['email'] !== '') {
+                        $merged[$id]['email'] = $person['email'];
+                    }
+                    $merged[$id]['inactive'] = $merged[$id]['inactive'] && $person['inactive'];
+                }
+            } finally {
+                if (is_resource($connection)) {
+                    sqlsrv_close($connection);
+                }
+            }
+        }
+        if (! $loaded && $failure instanceof RuntimeException) {
+            throw $failure;
+        }
+
+        $people = array_values($merged);
+        usort($people, function (array $left, array $right): int {
+            return $right['orders'] <=> $left['orders'] ?: strcmp($left['id'], $right['id']);
+        });
+
+        return $people;
     }
 
     private function salespersonSql(): string

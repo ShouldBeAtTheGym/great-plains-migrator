@@ -250,6 +250,14 @@ function uom_id_sql(string $expr): string
     END";
 }
 
+function gp_company_sources(): array
+{
+    return [
+        ['database' => 'BLU2', 'key' => 'blu2', 'company' => 'Blueoco, LLC', 'company_xmlid' => 'base.main_company', 'code_prefix' => 'Blueoco_', 'role' => 'parent'],
+        ['database' => 'BLUE', 'key' => 'blue', 'company' => 'Geckobrands, LLC', 'company_xmlid' => '__import__.company_geckobrands', 'code_prefix' => 'Gecko_', 'role' => 'branch'],
+    ];
+}
+
 function export_by_key(string $key): ?array
 {
     foreach (export_catalog() as $export) {
@@ -387,6 +395,10 @@ SELECT COUNT(*) AS c FROM (
     SELECT DISTINCT RTRIM(UOFM) FROM dbo.SOP10200
     UNION
     SELECT DISTINCT RTRIM(UOFM) FROM dbo.SOP30300
+    UNION
+    SELECT DISTINCT RTRIM(UOFM) FROM dbo.POP10110
+    UNION
+    SELECT DISTINCT RTRIM(UOFM) FROM dbo.POP30110
 ) AS units
 WHERE uom <> '' AND uom <> 'EA'
 SQL,
@@ -398,6 +410,8 @@ SELECT
     CASE
         WHEN UPPER(u.uom) = 'GROSS' THEN 144
         WHEN UPPER(u.uom) LIKE 'CASE %' THEN COALESCE(TRY_CAST(REPLACE(u.uom, 'CASE ', '') AS numeric(18, 6)), 1)
+        WHEN UPPER(u.uom) LIKE 'CASE[_]%' THEN COALESCE(TRY_CAST(SUBSTRING(u.uom, 6, 20) AS numeric(18, 6)), 1)
+        WHEN UPPER(u.uom) LIKE 'CASE%' AND TRY_CAST(SUBSTRING(u.uom, 5, 20) AS numeric(18, 6)) IS NOT NULL THEN TRY_CAST(SUBSTRING(u.uom, 5, 20) AS numeric(18, 6))
         WHEN UPPER(RIGHT(u.uom, 2)) = 'PK' AND TRY_CAST(LEFT(u.uom, LEN(u.uom) - 2) AS numeric(18, 6)) IS NOT NULL THEN TRY_CAST(LEFT(u.uom, LEN(u.uom) - 2) AS numeric(18, 6))
         ELSE 1
     END AS relative_factor
@@ -407,6 +421,10 @@ FROM (
     SELECT DISTINCT RTRIM(UOFM) FROM dbo.SOP10200
     UNION
     SELECT DISTINCT RTRIM(UOFM) FROM dbo.SOP30300
+    UNION
+    SELECT DISTINCT RTRIM(UOFM) FROM dbo.POP10110
+    UNION
+    SELECT DISTINCT RTRIM(UOFM) FROM dbo.POP30110
 ) AS u
 WHERE u.uom <> '' AND u.uom <> 'EA'
 SQL,
@@ -415,10 +433,10 @@ SQL,
             'key' => 'warehouses',
             'group' => 'Import first',
             'title' => 'Warehouses',
-            'detail' => 'Upload this file first, before the bins. One Odoo warehouse per Great Plains site. The short name is the site code, such as US or CA. Odoo creates the stock location for each warehouse, named with the short name and /Stock, such as US/Stock.',
+            'detail' => 'Upload this file first, before the bins. One Odoo warehouse per Great Plains site. Blueoco sites go to Blueoco, LLC and their short name starts with Blueoco_, such as Blueoco_GRR. Geckobrands sites go to Geckobrands, LLC and their short name starts with Gecko_, such as Gecko_GRR.',
             'before' => [
                 'Open Inventory → Configuration → Warehouses. The gear menu on that list has Import records. Upload this warehouse file, not the bins file.',
-                'On name, choose Warehouse. On code, choose Short Name. On company_id/id, choose Company / External ID. If Company is not in the list, set company_id/id to Do not import. Odoo fills in the company.',
+                'On name, choose Warehouse. On code, choose Short Name. On company_id/id, choose Company / External ID. Blueoco rows say base.main_company. Geckobrands rows say __import__.company_geckobrands. Map that column. GRR exists in both companies, and Odoo rejects the second short name when every row lands on Blueoco.',
             ],
             'hint' => 'Warehouses is under Inventory → Configuration → Warehouses.',
             'odoo' => 'Warehouses',
@@ -505,6 +523,27 @@ function salespad_customer_columns(): string
     }
 }
 
+function salespad_item_columns(): string
+{
+    if (! class_exists(\App\Models\Company::class) || ! class_exists(\App\Models\SalespadUserField::class)) {
+        return '';
+    }
+
+    try {
+        if (! \Illuminate\Support\Facades\Schema::hasTable('salespad_user_fields')) {
+            return '';
+        }
+        $company = \App\Models\Company::query()->orderBy('id')->first();
+        if (! $company) {
+            return '';
+        }
+
+        return app(\App\Services\SalespadUserFields::class)->sqlColumns($company, 'products');
+    } catch (\Throwable) {
+        return '';
+    }
+}
+
 function prospect_person_sql(string $alias, bool $html = false): string
 {
     $part = function (string $column) use ($alias, $html): string {
@@ -581,7 +620,7 @@ function prospect_exports(): array
             'key' => 'prospects',
             'group' => 'Prospects',
             'title' => 'Prospects',
-            'detail' => 'SalesPad prospects contacted on or after January 1, 2026 that are not historical. Each row is an Odoo opportunity. The contact, email, phone, and address come from spvProspectContact. When a prospect has several contacts, the one with an email is used, and the others are listed in Notes. Import prospect interactions after this file. Columns that start with gp_ are reference only.',
+            'detail' => 'SalesPad prospects that are not historical. Each row is an Odoo opportunity. The contact, email, phone, and address come from spvProspectContact. When a prospect has several contacts, the one with an email is used, and the others are listed in Notes. When SalesPad has a Last Contacted field, only prospects contacted on or after January 1, 2026 are included. Import prospect interactions after this file. Columns that start with gp_ are reference only.',
             'before' => [
                 'Match salespeople first. A salesperson that is not matched is left blank on the opportunity.',
                 'Open CRM → Pipeline. The gear menu on that list has Import records.',
@@ -684,7 +723,7 @@ SQL,
             'key' => 'prospect_contacts',
             'group' => 'Prospects',
             'title' => 'Prospect contacts',
-            'detail' => 'People on the prospects contacted on or after January 1, 2026 that are not historical. Each row is an Odoo contact. Reference is the SalesPad prospect number, and Notes name the prospect. Columns that start with gp_ are reference only.',
+            'detail' => 'People on prospects that are not historical. Each row is an Odoo contact. Reference is the SalesPad prospect number, and Notes name the prospect. When SalesPad has a Last Contacted field, only people on prospects contacted on or after January 1, 2026 are included. Columns that start with gp_ are reference only.',
             'before' => [
                 'Open Contacts. The gear menu on that list has Import records.',
                 'On state_id/id, choose State / External ID. On country_id/id, choose Country / External ID. On user_id/id, choose Salesperson / External ID. On comment, choose Notes. On ref, choose Reference. Set every gp_ column to Do not import.',
@@ -750,7 +789,7 @@ SQL,
             'key' => 'prospect_interactions',
             'group' => 'Prospects',
             'title' => 'Prospect interactions',
-            'detail' => 'SalesPad interactions from spvProspectInteraction for prospects contacted on or after January 1, 2026 that are not historical. Each row is a log note on the Odoo opportunity. Line breaks in the note are HTML. The prospect is looked up in Odoo when the file is copied, and that opportunity id is written in Related Document ID. An interaction whose opportunity is not in Odoo is left out and listed in the report on this page.',
+            'detail' => 'SalesPad interactions from spvProspectInteraction for prospects that are not historical. Each row is a log note on the Odoo opportunity. Line breaks in the note are HTML. When SalesPad has a Last Contacted field, only interactions for prospects contacted on or after January 1, 2026 are included. The prospect is looked up in Odoo when the file is copied, and that opportunity id is written in Related Document ID. An interaction whose opportunity is not in Odoo is left out and listed in the report on this page.',
             'before' => [
                 'Import the prospect file on CRM → Pipeline first. An interaction whose opportunity is not in Odoo yet is left out. Download this file again after those opportunities are imported.',
                 'Turn on developer mode. Settings → General Settings → Developer Tools → Activate the developer mode.',
@@ -841,7 +880,7 @@ function partner_exports(): array
             'key' => 'customers',
             'group' => 'Customers and vendors',
             'title' => 'Customers',
-            'detail' => 'Odoo contacts. Country is the ISO code. A blank GP country is exported as US. Payment terms point at the payment term file. SalesPad user fields from spxCustomer fill the User Fields tab. Columns that start with gp_ are reference only.',
+            'detail' => 'Odoo contacts from Blueoco and Geckobrands together. A customer found in both companies is one contact, with both customer numbers in Customer Number, such as 001547 / 2016437. Company is blank on that shared contact so the parent and the branch can both use it. A customer found in only one company keeps that company. Country is the ISO code. A blank GP country is exported as US. Payment terms point at the payment term file. SalesPad user fields from spxCustomer fill the User Fields tab. Columns that start with gp_ are reference only.',
             'before' => [
                 'Accounting → Configuration → Currencies. Activate USD. Activate GBP too if any customer uses Z-UK.',
                 'Contacts → Configuration → Countries. Open United States and confirm the states are listed, including SC.',
@@ -1394,12 +1433,13 @@ function product_exports(): array
         WHEN NULLIF({$subcategory}, '') IS NULL OR {$subcategory} = {$category} THEN CONCAT('product_categ_', {$category})
         ELSE CONCAT('product_categ_', {$category}, '__', {$subcategory})
     END";
+    $itemColumns = salespad_item_columns();
     return [
         [
             'key' => 'products',
             'group' => 'Products',
             'title' => 'Products',
-            'detail' => 'Odoo products. Goods are type consu. Stockable items have is_storable set. EA uses the Odoo unit Units. Import categories and units first. Kits are left out. When the same barcode is on more than one item, the first item keeps it. The next ones are numbered -1, -2, and so on.',
+            'detail' => 'Odoo products. Goods are type consu. Stockable items have is_storable set. EA uses the Odoo unit Units. Import categories and units first. Kits are left out. When the same barcode is on more than one item, the first item keeps it. The next ones are numbered -1, -2, and so on. SalesPad item user fields from spxItemMaster are included. Barcode and category already have their own columns.',
             'odoo' => 'Products',
             'file' => 'odoo18_products.csv',
             'count_sql' => "SELECT COUNT(*) AS c FROM dbo.spvItemMaster WHERE RTRIM(Item_Type) <> 'Kit'",
@@ -1427,8 +1467,10 @@ SELECT
     RTRIM(i.Item_Type) AS gp_item_type,
     RTRIM(i.[[subcategory]]) AS gp_subcategory,
     RTRIM(i.[[brand]]) AS gp_brand,
-    RTRIM(i.Selling_U_of_M) AS gp_uom
+    RTRIM(i.Selling_U_of_M) AS gp_uom{$itemColumns}
 FROM dbo.spvItemMaster AS i
+LEFT JOIN dbo.spxItemMaster AS u
+    ON RTRIM(u.Item_Number) = RTRIM(i.Item_Number)
 LEFT JOIN (
     SELECT
         RTRIM(Item_Number) AS item_number,
@@ -1448,7 +1490,7 @@ SQL,
             'detail' => 'Odoo inventory counts, one row per item and bin. Import the warehouses and the bins first. The location is that warehouse’s stock location and the bin, such as US/Stock/PICK ROOM. Odoo shows the warehouse from that location. Services and other items that are not Sales Inventory are left out. Odoo cannot put a quantity on a consumable or a service.',
             'fields' => [
                 'product_id/id' => 'Product / External ID',
-                'location_id' => 'Do not import',
+                'gp_location' => 'Do not import',
                 'location_id/id' => 'Location / External ID',
                 'gp_qty_allocated' => 'Do not import',
             ],
@@ -1473,7 +1515,7 @@ SQL,
 SELECT
     CONCAT('stock_', RTRIM(m.Item_Number), '_', RTRIM(m.Location), '_', REPLACE(REPLACE(REPLACE(RTRIM(m.Bin), CHAR(13), ''), CHAR(10), ''), ' ', '_')) AS id,
     CONCAT('__import__.product_variant_', RTRIM(m.Item_Number)) AS [product_id/id],
-    CONCAT(RTRIM(m.Location), '/Stock/', REPLACE(REPLACE(RTRIM(m.Bin), CHAR(13), ''), CHAR(10), '')) AS location_id,
+    CONCAT(RTRIM(m.Location), '/Stock/', REPLACE(REPLACE(RTRIM(m.Bin), CHAR(13), ''), CHAR(10), '')) AS gp_location,
     CONCAT('__import__.stock_bin_', RTRIM(m.Location), '_', REPLACE(REPLACE(REPLACE(RTRIM(m.Bin), CHAR(13), ''), CHAR(10), ''), ' ', '_')) AS [location_id/id],
     SUM(m.Quantity) AS inventory_quantity,
     SUM(m.Qty_Allocated) AS gp_qty_allocated
@@ -1793,7 +1835,7 @@ SELECT
     CASE WHEN NULLIF(RTRIM(l.ITEMNMBR), '') IS NULL THEN '' ELSE CONCAT('__import__.product_variant_', RTRIM(l.ITEMNMBR)) END AS [order_line/product_id/id],
     RTRIM(l.ITEMDESC) AS [order_line/name],
     l.QTYORDER AS [order_line/product_qty],
-    {$uom} AS [order_line/product_uom/id],
+    {$uom} AS [order_line/uom_id/id],
     l.UNITCOST AS [order_line/price_unit],
     CONVERT(varchar(19), l.PRMDATE, 120) AS [order_line/date_planned],
     RTRIM(l.VNDITNUM) AS gp_vendor_product_code

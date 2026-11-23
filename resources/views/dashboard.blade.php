@@ -13,9 +13,16 @@
             <div class="company-grid">
                 <section class="card">
                     <h2>Great Plains</h2>
-                    <strong>{{ $company->gp_site_name ?: $company->gp_company_name }}</strong>
-                    <div class="muted">Database {{ $company->gp_database }} on {{ $company->gp_server }}</div>
-                    @if ($company->gp_address)<div>{{ $company->gp_address }}</div>@endif
+                    @forelse ($gpCompanies as $gp)
+                        <div @if (! $loop->first) style="margin-top:.8rem;" @endif>
+                            <strong>{{ $gp['name'] }}</strong>
+                            <div class="muted">Database {{ $gp['database'] }} on {{ $company->gp_server }}</div>
+                        </div>
+                    @empty
+                        <strong>{{ $company->gp_company_name ?: $company->name }}</strong>
+                        <div class="muted">Database {{ $company->gp_database }} on {{ $company->gp_server }}</div>
+                    @endforelse
+                    @if ($company->gp_address)<div style="margin-top:.6rem;">{{ $company->gp_address }}</div>@endif
                     @if ($company->gp_phone)<div>{{ $company->gp_phone }}</div>@endif
                     <div class="muted">GP {{ $company->gp_version }} @if($company->gp_currency) · {{ $company->gp_currency }} @endif</div>
                     <div style="margin-top:.6rem;">SalesPad {{ $company->salespad_installed ? 'is installed' : 'was not detected' }}.
@@ -25,11 +32,20 @@
                 </section>
                 <section class="card">
                     <h2>Odoo</h2>
-                    <strong>{{ $company->odoo_company_name ?: 'Odoo company' }}</strong>
                     <div class="muted">{{ $company->odoo_url }}</div>
                     <div>Database {{ $company->odoo_database }} · version {{ $company->odoo_version }}</div>
+                    @forelse ($odooCompanies as $row)
+                        <div @if ($loop->first) style="margin-top:.6rem;" @else style="margin-top:.8rem;" @endif>
+                            <strong>{{ $row['name'] }}</strong>
+                            @if ($row['parent'] !== '')
+                                <div class="muted">Branch of {{ $row['parent'] }}</div>
+                            @endif
+                        </div>
+                    @empty
+                        <strong>{{ $company->odoo_company_name ?: 'Odoo company' }}</strong>
+                    @endforelse
                     @if ($company->odoo_company)
-                        <div>{{ $company->odoo_company['street'] ?? '' }} {{ $company->odoo_company['city'] ?? '' }} {{ $company->odoo_company['zip'] ?? '' }}</div>
+                        <div style="margin-top:.6rem;">{{ $company->odoo_company['street'] ?? '' }} {{ $company->odoo_company['city'] ?? '' }} {{ $company->odoo_company['zip'] ?? '' }}</div>
                         <div class="muted">{{ $company->odoo_company['currency'] ?? '' }} {{ $company->odoo_company['country'] ?? '' }}</div>
                     @endif
                 </section>
@@ -47,7 +63,7 @@
             </div>
 
             @include('partials.gp-copy-queue', ['queue' => $queue, 'reload' => false])
-            @include('partials.api-uploads', ['uploads' => $uploads ?? ['jobs' => [], 'limited' => false]])
+            @include('partials.api-uploads', ['uploads' => $uploads ?? ['jobs' => [], 'limited' => false, 'current' => null, 'history' => []], 'alwaysShowService' => true])
 
             @if ($countError)
                 <div class="alert alert-bad">{{ $countError }}</div>

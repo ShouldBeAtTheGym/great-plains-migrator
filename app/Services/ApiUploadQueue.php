@@ -200,6 +200,56 @@ class ApiUploadQueue
         return ['queued' => true, 'waiting' => false, 'message' => 'Part 2 onward is uploading on the server.'];
     }
 
+    public function queue(string $key): bool
+    {
+        if ($this->plan($key) === null) {
+            return false;
+        }
+        $this->remember($key);
+
+        return true;
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function queued(): array
+    {
+        return $this->waitingKeys();
+    }
+
+    public function startWaitingWhenIdle(): ?string
+    {
+        $lock = fopen(dirname($this->queuePath()).'/api-upload-start.lock', 'c');
+        if ($lock === false || ! flock($lock, LOCK_EX | LOCK_NB)) {
+            if (is_resource($lock)) {
+                fclose($lock);
+            }
+
+            return null;
+        }
+        try {
+            if ($this->anUploadIsUnfinished()) {
+                return null;
+            }
+            foreach ($this->waitingKeys() as $key) {
+                if ($this->plan($key) === null) {
+                    $this->forget($key);
+                    continue;
+                }
+                $this->forget($key);
+                $this->launch($key);
+
+                return $key;
+            }
+
+            return null;
+        } finally {
+            flock($lock, LOCK_UN);
+            fclose($lock);
+        }
+    }
+
     public function tick(): void
     {
         $slots = self::MAX_JOBS - $this->runningCount();
@@ -233,52 +283,22 @@ class ApiUploadQueue
     }
 
     /**
-     * @return array{limited: bool, jobs: list<array<string, mixed>>}
+     * @return array{limited: bool, jobs: list<array<string, mixed>>, current: ?array<string, mixed>, history: list<array<string, mixed>>}
      */
     public function status(): array
     {
+        $waitingKeys = $this->waitingKeys();
         $jobs = [];
+        $current = null;
         foreach ($this->plans() as $key => $plan) {
-            $progress = $this->readProgress($plan);
-            $last = $this->total($key, $plan, $progress);
-            $next = (int) ($progress['next'] ?? 0);
-            $loaded = (int) ($progress['loaded_through'] ?? 0);
-            if ($loaded === 0 && $next > 1) {
-                $loaded = $next - 1;
+            $job = $this->describe($key, $plan, $waitingKeys);
+            $this->recordHistory($job);
+            if ($this->listed($job)) {
+                $jobs[] = $job;
             }
-            $active = $this->unitIsActive((string) $plan['unit']);
-            $waiting = in_array($key, $this->waitingKeys(), true);
-            $finished = $last > 0 && $next > $last;
-            $problem = trim((string) ($progress['error'] ?? ''));
-            $touched = strtotime((string) ($progress['at'] ?? ''));
-            $fresh = $touched !== false && $touched >= time() - 240;
-            $alive = $active || ($fresh && ! $finished);
-            if (! $alive && ! $waiting && ($finished || $next === 0)) {
-                continue;
+            if ($current === null && in_array($job['state'], ['running', 'retrying'], true)) {
+                $current = $job;
             }
-            $remaining = max(0, $last - $loaded);
-            $state = 'stopped';
-            if ($finished) {
-                $state = 'done';
-            } elseif ($alive && $problem !== '') {
-                $state = 'retrying';
-            } elseif ($alive) {
-                $state = 'running';
-            } elseif ($waiting) {
-                $state = 'waiting';
-            }
-            $jobs[] = [
-                'key' => $key,
-                'title' => (string) $plan['title'],
-                'state' => $state,
-                'total' => $last,
-                'loaded' => $loaded,
-                'remaining' => $remaining,
-                'finish' => $state === 'running'
-                    ? $this->finishAt($remaining, (int) $plan['batch'], (float) ($progress['seconds'] ?? 0))
-                    : '',
-                'note' => $state === 'retrying' ? 'Retrying. '.$problem : '',
-            ];
         }
         $running = 0;
         foreach ($jobs as $job) {
@@ -288,9 +308,145 @@ class ApiUploadQueue
         }
 
         return [
-            'limited' => $running >= self::MAX_JOBS && $this->waitingKeys() !== [],
+            'limited' => $running >= self::MAX_JOBS && $waitingKeys !== [],
             'jobs' => $jobs,
+            'current' => $current,
+            'history' => $this->readHistory(),
         ];
+    }
+
+    /**
+     * @param  list<string>  $waitingKeys
+     * @return array<string, mixed>
+     */
+    private function describe(string $key, array $plan, array $waitingKeys): array
+    {
+        $progress = $this->readProgress($plan);
+        $last = $this->total($key, $plan, $progress);
+        $next = (int) ($progress['next'] ?? 0);
+        $loaded = (int) ($progress['loaded_through'] ?? 0);
+        if ($loaded === 0 && $next > 1) {
+            $loaded = $next - 1;
+        }
+        $active = $this->unitIsActive((string) $plan['unit']);
+        $waiting = in_array($key, $waitingKeys, true);
+        $finished = $last > 0 && $next > $last;
+        $problem = trim((string) ($progress['error'] ?? ''));
+        $touched = strtotime((string) ($progress['at'] ?? ''));
+        $fresh = $touched !== false && $touched >= time() - 240;
+        $alive = $active || ($fresh && ! $finished);
+        $remaining = max(0, $last - $loaded);
+        $state = 'idle';
+        if ($finished) {
+            $state = 'done';
+        } elseif ($alive && $problem !== '') {
+            $state = 'retrying';
+        } elseif ($alive) {
+            $state = 'running';
+        } elseif ($waiting) {
+            $state = 'waiting';
+        } elseif ($next > 0 || $loaded > 0 || $problem !== '') {
+            $state = 'stopped';
+        }
+        $at = $touched !== false ? date('c', $touched) : '';
+
+        return [
+            'key' => $key,
+            'title' => (string) $plan['title'],
+            'unit' => (string) $plan['unit'],
+            'state' => $state,
+            'total' => $last,
+            'loaded' => $loaded,
+            'remaining' => $remaining,
+            'percent' => $last > 0 ? (int) min(100, round(($loaded / $last) * 100)) : 0,
+            'next' => $next,
+            'finish' => $state === 'running'
+                ? $this->finishAt($remaining, (int) $plan['batch'], (float) ($progress['seconds'] ?? 0))
+                : '',
+            'note' => $state === 'retrying' ? 'Retrying. '.$problem : ($state === 'stopped' ? $problem : ''),
+            'when' => $at === '' ? '' : \Illuminate\Support\Carbon::parse($at)->timezone('America/New_York')->format('M j, g:i A'),
+            'at' => $at,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $job
+     */
+    private function listed(array $job): bool
+    {
+        $alive = in_array($job['state'], ['running', 'retrying'], true);
+
+        return $alive || $job['state'] === 'waiting' || ($job['state'] === 'stopped' && (int) $job['next'] > 0);
+    }
+
+    /**
+     * @param  array<string, mixed>  $job
+     */
+    private function recordHistory(array $job): void
+    {
+        if (! in_array($job['state'], ['running', 'retrying', 'waiting', 'stopped', 'done'], true)) {
+            return;
+        }
+        $history = $this->readHistory();
+        foreach ($history as $row) {
+            if (($row['key'] ?? '') !== $job['key']) {
+                continue;
+            }
+            if (($row['state'] ?? '') !== $job['state']) {
+                break;
+            }
+            $loadedDelta = abs((int) $job['loaded'] - (int) ($row['loaded'] ?? 0));
+            $elapsed = isset($row['at']) ? time() - (int) strtotime((string) $row['at']) : 9999;
+            if ($loadedDelta < 5000 && $elapsed < 120) {
+                return;
+            }
+            break;
+        }
+        array_unshift($history, [
+            'key' => $job['key'],
+            'title' => $job['title'],
+            'unit' => $job['unit'],
+            'state' => $job['state'],
+            'loaded' => $job['loaded'],
+            'total' => $job['total'],
+            'percent' => $job['percent'],
+            'note' => $job['note'],
+            'at' => $job['at'] !== '' ? $job['at'] : now()->toIso8601String(),
+            'when' => $job['when'] !== '' ? $job['when'] : now('America/New_York')->format('M j, g:i A'),
+        ]);
+        $this->writeHistory(array_slice($history, 0, 40));
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function readHistory(): array
+    {
+        $path = $this->historyPath();
+        if (! is_file($path)) {
+            return [];
+        }
+        $decoded = json_decode((string) file_get_contents($path), true);
+
+        return array_values(array_filter(is_array($decoded) ? $decoded : [], 'is_array'));
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $history
+     */
+    private function writeHistory(array $history): void
+    {
+        $path = $this->historyPath();
+        $directory = dirname($path);
+        if (! is_dir($directory)) {
+            mkdir($directory, 0775, true);
+        }
+        file_put_contents($path, (string) json_encode(array_values($history), JSON_PRETTY_PRINT), LOCK_EX);
+    }
+
+    private function historyPath(): string
+    {
+        return dirname($this->queuePath()).'/api-upload-history.json';
     }
 
     /**
@@ -353,7 +509,9 @@ class ApiUploadQueue
         }
         $listed = trim((string) shell_exec("systemctl --user list-units 'odooexport-*.service' --state=active --no-legend --plain 2>/dev/null"));
         if ($listed === '') {
-            return $this->activeCache = $this->publishedUnits();
+            $names = $this->publishedUnits();
+
+            return $this->activeCache = $names !== [] ? $names : $this->probeUnits();
         }
         $names = [];
         foreach (preg_split('/\R/', $listed) ?: [] as $line) {
@@ -388,9 +546,71 @@ class ApiUploadQueue
         return array_values(array_filter(is_array($units) ? $units : [], 'is_string'));
     }
 
+    /**
+     * @return list<string>
+     */
+    private function probeUnits(): array
+    {
+        if ($this->activeUnits instanceof Closure) {
+            return [];
+        }
+        $active = [];
+        foreach ($this->plans() as $plan) {
+            $unit = (string) ($plan['unit'] ?? '');
+            if ($unit === '') {
+                continue;
+            }
+            $state = trim((string) shell_exec('systemctl --user is-active '.escapeshellarg($unit).' 2>/dev/null'));
+            if ($state === 'active') {
+                $active[] = $unit;
+            }
+        }
+
+        return $active;
+    }
+
     private function unitIsActive(string $unit): bool
     {
         return in_array($unit, $this->activeUnitNames(), true);
+    }
+
+    private function anUploadIsUnfinished(): bool
+    {
+        foreach ($this->plans() as $plan) {
+            $progress = $this->readProgress($plan);
+            $last = (int) ($progress['last'] ?? 0);
+            $next = (int) ($progress['next'] ?? 0);
+            if ($last > 0 && $next > $last) {
+                continue;
+            }
+            if ($next > 0 && ($last === 0 || $next <= $last)) {
+                return true;
+            }
+            if ($this->unitIsActive((string) ($plan['unit'] ?? ''))) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function launch(string $key): void
+    {
+        if ($this->startUnit instanceof Closure) {
+            $plan = $this->plan($key);
+            ($this->startUnit)((string) ($plan['unit'] ?? ''), $key);
+
+            return;
+        }
+        $log = storage_path('logs/'.$key.'-upload.log');
+        $pidFile = storage_path('app/'.$key.'.pid');
+        $command = 'cd '.escapeshellarg(base_path())
+            .' && nohup '.escapeshellarg(PHP_BINARY).' artisan odoo:upload '.escapeshellarg($key)
+            .' >> '.escapeshellarg($log).' 2>&1 & echo $!';
+        $pid = trim((string) shell_exec($command));
+        if ($pid !== '') {
+            file_put_contents($pidFile, $pid);
+        }
     }
 
     private function start(string $unit, string $key): void

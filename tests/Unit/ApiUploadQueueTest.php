@@ -15,8 +15,11 @@ class ApiUploadQueueTest extends TestCase
     public function test_a_third_job_waits_when_two_are_already_running(): void
     {
         $path = storage_path('framework/testing/api-upload-queue.json');
-        if (is_file($path)) {
-            unlink($path);
+        $history = storage_path('framework/testing/api-upload-history.json');
+        foreach ([$path, $history] as $file) {
+            if (is_file($file)) {
+                unlink($file);
+            }
         }
         $started = [];
         $queue = new ApiUploadQueue(
@@ -35,9 +38,17 @@ class ApiUploadQueueTest extends TestCase
 
         $status = $queue->status();
         $this->assertTrue($status['limited']);
+        $this->assertSame('customer_price_lists', $status['current']['key']);
+        $this->assertSame('running', $status['current']['state']);
         $waiting = collect($status['jobs'])->firstWhere('key', 'customer_interactions');
         $this->assertSame('waiting', $waiting['state']);
         $this->assertSame($waiting['total'] - $waiting['loaded'], $waiting['remaining']);
+        $recorded = collect($status['history'])->firstWhere('key', 'customer_interactions');
+        $this->assertSame('waiting', $recorded['state']);
+        $this->assertSame('odooexport-api-customer-interactions.service', $recorded['unit']);
+
+        $again = $queue->status();
+        $this->assertCount(count($status['history']), $again['history']);
     }
 
     public function test_part_one_samples_come_from_the_first_30000_saved_rows(): void

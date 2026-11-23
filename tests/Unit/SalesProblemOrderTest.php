@@ -105,15 +105,17 @@ class SalesProblemOrderTest extends TestCase
             'fields' => [],
         ]);
 
-        $this->assertSame('base.main_company', $export['extra']['company_id/id']);
+        $this->assertArrayNotHasKey('company_id/id', $export['extra'] ?? []);
     }
 
     public function test_open_invoices_leave_out_customers_that_are_not_in_odoo(): void
     {
         $this->mock(GpConnection::class, function ($mock) {
-            $mock->shouldReceive('rows')->once()->andReturn([
+            $mock->shouldReceive('rows')->twice()->andReturn([
                 ['name' => '1000471'],
                 ['name' => '31923'],
+            ], [
+                ['name' => 'BLU2'],
             ]);
         });
         $odoo = $this->createMock(OdooClient::class);
@@ -138,8 +140,10 @@ class SalesProblemOrderTest extends TestCase
     public function test_a_customer_already_in_odoo_stays_on_the_open_invoice_file(): void
     {
         $this->mock(GpConnection::class, function ($mock) {
-            $mock->shouldReceive('rows')->once()->andReturn([
+            $mock->shouldReceive('rows')->twice()->andReturn([
                 ['name' => '31923'],
+            ], [
+                ['name' => 'BLU2'],
             ]);
         });
         $odoo = $this->createMock(OdooClient::class);
@@ -168,8 +172,10 @@ class SalesProblemOrderTest extends TestCase
     public function test_an_unreachable_odoo_leaves_the_open_invoice_file_unchanged(): void
     {
         $this->mock(GpConnection::class, function ($mock) {
-            $mock->shouldReceive('rows')->once()->andReturn([
+            $mock->shouldReceive('rows')->twice()->andReturn([
                 ['name' => '1000471'],
+            ], [
+                ['name' => 'BLU2'],
             ]);
         });
         $odoo = $this->createMock(OdooClient::class);

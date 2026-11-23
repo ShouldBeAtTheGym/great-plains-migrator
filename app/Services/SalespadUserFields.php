@@ -33,6 +33,17 @@ class SalespadUserFields
                 'odoo_model' => 'res.partner',
                 'card' => 'User Fields',
                 'skip' => ['Customer_Num'],
+                'page_xpath' => "//page[@name='accounting_disabled']",
+                'page_position' => 'after',
+            ],
+            'products' => [
+                'title' => 'Product user fields',
+                'table' => 'spxItemMaster',
+                'odoo_model' => 'product.template',
+                'card' => 'User Fields',
+                'skip' => ['Item_Number', 'xBarcode', 'xCategory'],
+                'page_xpath' => '//notebook',
+                'page_position' => 'inside',
             ],
         ];
     }
@@ -50,29 +61,43 @@ class SalespadUserFields
     public function sync(Company $company, string $key): void
     {
         $model = $this->model($key);
-        $connection = $this->gp->connect($company);
-        try {
-            $columns = $this->gp->rows($connection, <<<'SQL'
-SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH
-FROM INFORMATION_SCHEMA.COLUMNS
-WHERE TABLE_NAME = 'spxCustomer'
-SQL);
-            $defined = $this->gp->rows($connection, <<<'SQL'
-SELECT Field_Name, Label, Value_Type, Value_Options, Disabled, Display_Seq, Length
-FROM dbo.spvUserField
-WHERE Table_Name = 'spxCustomer'
-SQL);
-        } finally {
-            sqlsrv_close($connection);
-        }
-
-        $byColumn = [];
-        foreach ($columns as $column) {
-            $name = trim((string) ($column['COLUMN_NAME'] ?? ''));
-            if ($name !== '') {
-                $byColumn[strtolower($name)] = $column;
+        $table = str_replace("'", "''", $model['table']);
+        $columns = [];
+        $defined = [];
+        $failure = null;
+        foreach (app(CompanyMerge::class)->sources() as $source) {
+            try {
+                $connection = $this->gp->connectDatabase($company, $source['database']);
+            } catch (RuntimeException $exception) {
+                $failure = $exception;
+                continue;
+            }
+            try {
+                foreach ($this->gp->rows($connection, "SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{$table}'") as $column) {
+                    $name = strtolower(trim((string) ($column['COLUMN_NAME'] ?? '')));
+                    if ($name !== '' && ! isset($columns[$name])) {
+                        $columns[$name] = $column;
+                    }
+                }
+                foreach ($this->gp->rows($connection, "SELECT Field_Name, Label, Value_Type, CAST(Value_Options AS varchar(4000)) AS Value_Options, Disabled, Display_Seq, Length FROM dbo.spvUserField WHERE Table_Name = '{$table}'") as $row) {
+                    $name = strtolower(trim((string) ($row['Field_Name'] ?? '')));
+                    if ($name !== '' && ! isset($defined[$name])) {
+                        $defined[$name] = $row;
+                    }
+                }
+            } catch (RuntimeException $exception) {
+                $failure = $exception;
+            } finally {
+                if (is_resource($connection)) {
+                    sqlsrv_close($connection);
+                }
             }
         }
+        if ($columns === [] && $failure) {
+            throw $failure;
+        }
+
+        $byColumn = $columns;
 
         $sort = 0;
         foreach ($defined as $row) {
@@ -93,7 +118,8 @@ SQL);
             if ($length <= 0) {
                 $length = (int) ($column['CHARACTER_MAXIMUM_LENGTH'] ?? 0);
             }
-            $suggestion = $this->suggest($sqlType, (string) ($row['Value_Type'] ?? ''), (string) ($row['Value_Options'] ?? ''), $disabled);
+            $rawOptions = str_replace(["\r\n", "\r", "\n"], ';', (string) ($row['Value_Options'] ?? ''));
+            $suggestion = $this->suggest($sqlType, (string) ($row['Value_Type'] ?? ''), $rawOptions, $disabled);
 
             $existing = SalespadUserField::query()->firstOrNew([
                 'company_id' => $company->id,
@@ -236,6 +262,82 @@ SQL);
             .$ready->count().' checked field'.($ready->count() === 1 ? ' is' : 's are').' on that card.';
     }
 
+    /**
+     * @return array<string, int>
+     */
+    public function expandSelections(Company $company, string $key): array
+    {
+        $fields = SalespadUserField::query()
+            ->where('company_id', $company->id)
+            ->where('model_key', $key)
+            ->where('selected', true)
+            ->where('field_type', 'selection')
+            ->whereNotNull('odoo_field')
+            ->get();
+        $found = [];
+        foreach ($fields as $field) {
+            $found[$field->id] = $this->optionList($field->options);
+        }
+        foreach (app(CompanyMerge::class)->sources() as $source) {
+            try {
+                $connection = $this->gp->connectDatabase($company, $source['database']);
+            } catch (RuntimeException) {
+                continue;
+            }
+            try {
+                $columns = [];
+                $table = $this->model($key)['table'];
+                foreach ($this->gp->rows($connection, "SELECT name FROM sys.columns WHERE object_id = OBJECT_ID('dbo.{$table}')") as $row) {
+                    $columns[strtolower(trim((string) ($row['name'] ?? '')))] = true;
+                }
+                foreach ($fields as $field) {
+                    if (! isset($columns[strtolower($field->field_name)])) {
+                        continue;
+                    }
+                    $expression = gp_text_sql('['.$field->field_name.']');
+                    $rows = $this->gp->rows($connection, 'SELECT DISTINCT '.$expression.' AS value FROM dbo.'.$table.' WHERE NULLIF('.$expression.", '') IS NOT NULL");
+                    foreach ($this->cleanValues($rows) as $value) {
+                        if (! in_array($value, $found[$field->id], true)) {
+                            $found[$field->id][] = $value;
+                        }
+                    }
+                }
+            } finally {
+                if (is_resource($connection)) {
+                    sqlsrv_close($connection);
+                }
+            }
+        }
+
+        $added = [];
+        foreach ($fields as $field) {
+            $options = $found[$field->id];
+            sort($options, SORT_NATURAL | SORT_FLAG_CASE);
+            $field->options = implode('; ', $options);
+            $field->save();
+            $added[$field->label] = $this->odoo->addSelectionValues($company, $this->model($key)['odoo_model'], (string) $field->odoo_field, $options);
+        }
+
+        return $added;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $rows
+     * @return list<string>
+     */
+    private function cleanValues(array $rows): array
+    {
+        $values = [];
+        foreach ($rows as $row) {
+            $value = trim((string) ($row['value'] ?? ''));
+            if ($value !== '' && ! in_array($value, $values, true)) {
+                $values[] = $value;
+            }
+        }
+
+        return $values;
+    }
+
     public function sqlColumns(Company $company, string $key): string
     {
         $fields = SalespadUserField::query()
@@ -371,7 +473,9 @@ SQL);
         foreach ($fieldNames as $name) {
             $group .= '<field name="'.htmlspecialchars($name, ENT_QUOTES).'"/>';
         }
-        $arch = '<data><xpath expr="//page[@name=\'accounting_disabled\']" position="after">'
+        $xpath = $model['page_xpath'] ?? "//page[@name='accounting_disabled']";
+        $position = $model['page_position'] ?? 'after';
+        $arch = '<data><xpath expr="'.htmlspecialchars($xpath, ENT_QUOTES).'" position="'.htmlspecialchars($position, ENT_QUOTES).'">'
             .'<page string="'.htmlspecialchars($model['card'], ENT_QUOTES).'" name="gp_user_fields"><group>'.$group.'</group></page>'
             .'</xpath></data>';
         $this->odoo->execute($company, 'ir.ui.view', 'create', [[

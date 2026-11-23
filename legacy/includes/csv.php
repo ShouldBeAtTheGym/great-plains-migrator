@@ -19,6 +19,9 @@ function csv_value($value, string $column)
         if ($column === 'id' || str_ends_with($column, '/id')) {
             $value = preg_replace('/[^A-Za-z0-9._-]/', '_', $value);
         }
+        if ($column === 'id') {
+            $value = str_replace('.', '_', $value);
+        }
         if (preg_match('/^-?\d+\.\d+$/', $value)) {
             $value = rtrim(rtrim($value, '0'), '.');
             if ($value === '' || $value === '-' || $value === '-0') {

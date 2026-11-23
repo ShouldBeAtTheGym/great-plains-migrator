@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Company;
 use App\Models\User;
+use App\Services\ConversionPlanner;
 use App\Services\ExportCatalog;
 use App\Services\OdooClient;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -36,23 +37,22 @@ class CustomerImportCompanyTest extends TestCase
             });
         });
 
-        $this->actingAs($user)
-            ->post(route('steps.import-company', 'customers'), [
-                'odoo_import_company_id' => 2,
-            ])
-            ->assertRedirect(route('steps.show', 'customers'));
+        app(ConversionPlanner::class)->syncSteps($company);
 
-        $company->refresh();
-        $this->assertSame(2, $company->odoo_import_company_id);
-        $this->assertSame('Geckobrands, LLC', $company->odoo_import_company_name);
+        $this->actingAs($user)
+            ->get(route('steps.show', 'customers'))
+            ->assertOk()
+            ->assertDontSee('Pick the company these customers belong to')
+            ->assertDontSee('Save the company above before you download')
+            ->assertSee('A customer in both companies has a blank Company');
 
         $export = app(ExportCatalog::class)->prepare($company, [
             'key' => 'customers',
             'fields' => [],
         ]);
 
-        $this->assertSame('odooexport.company_2', $export['extra']['company_id/id']);
-        $this->assertSame('Company / External ID', $export['fields']['company_id/id']);
+        $this->assertSame('Company', $export['fields']['company_id']);
+        $this->assertArrayNotHasKey('company_id/id', $export['extra'] ?? []);
     }
 
     public function test_an_unknown_company_is_rejected(): void

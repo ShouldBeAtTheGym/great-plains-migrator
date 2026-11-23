@@ -19,7 +19,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class StepController extends Controller
 {
-    public function show(string $key, ExportCatalog $catalog, ConversionPlanner $planner, GpConnection $gp, OdooClient $odoo, GpCopyService $copies): View
+    public function show(string $key, ExportCatalog $catalog, ConversionPlanner $planner, GpConnection $gp, GpCopyService $copies): View
     {
         $company = Company::current();
         $copies->kickoffCatalog($company);
@@ -40,7 +40,6 @@ class StepController extends Controller
         try {
             $export = $catalog->prepare($company, $export);
             if ($copy['status'] === 'complete') {
-                $export = $copies->applyLiveLookups($company, $export);
                 if ($copies->ready($company, $key, $export)) {
                     $columns = $copies->headers($company, $key);
                     $count = $copy['record_count'];
@@ -61,16 +60,6 @@ class StepController extends Controller
             $loadError = $exception->getMessage();
         }
 
-        $odooCompanies = [];
-        $companyLoadError = null;
-        if ($key === 'customers') {
-            try {
-                $odooCompanies = $this->odooCompanies($company, $odoo);
-            } catch (RuntimeException $exception) {
-                $companyLoadError = $exception->getMessage();
-            }
-        }
-
         return view('steps.show', [
             'company' => $company,
             'export' => $export,
@@ -87,8 +76,6 @@ class StepController extends Controller
             'queue' => $copies->catalogQueue($company),
             'uploads' => app(ApiUploadQueue::class)->status(),
             'loadError' => $loadError,
-            'odooCompanies' => $odooCompanies,
-            'companyLoadError' => $companyLoadError,
         ]);
     }
 
@@ -144,12 +131,6 @@ class StepController extends Controller
     public function download(string $key, ExportCatalog $catalog, GpCopyService $copies, ?int $part = null): StreamedResponse|RedirectResponse
     {
         $company = Company::current();
-        if ($key === 'customers' && ! $company->odoo_import_company_id) {
-            return redirect()
-                ->route('steps.show', $key)
-                ->with('error', 'Choose the Odoo company for this import before downloading the file.');
-        }
-
         $export = $this->export($catalog, $key);
         $step = $this->step($company, $key);
         $current = ConversionStep::currentFor($company);
@@ -160,7 +141,6 @@ class StepController extends Controller
 
         try {
             $export = $catalog->prepare($company, $export);
-            $export = $copies->applyLiveLookups($company, $export);
         } catch (RuntimeException $exception) {
             return redirect()->route('steps.show', $key)->with('error', $exception->getMessage());
         }

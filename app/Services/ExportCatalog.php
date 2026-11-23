@@ -13,7 +13,7 @@ class ExportCatalog
 
     private bool $booted = false;
 
-    public function __construct(private OdooClient $odoo) {}
+    public function __construct(private OdooClient $odoo, private ?CompanyMerge $merge = null) {}
 
     public function all(): array
     {
@@ -31,10 +31,10 @@ class ExportCatalog
 
     public function prepare(Company $company, array $export): array
     {
-        if (($export['key'] ?? '') === 'customers' && class_exists(SalespadUserField::class)) {
+        if (in_array(($export['key'] ?? ''), ['customers', 'products'], true) && class_exists(SalespadUserField::class)) {
             $chosen = SalespadUserField::query()
                 ->where('company_id', $company->id)
-                ->where('model_key', 'customers')
+                ->where('model_key', $export['key'])
                 ->where('selected', true)
                 ->whereNotNull('odoo_field')
                 ->get();
@@ -44,18 +44,8 @@ class ExportCatalog
 
         }
 
-        $importCompanyName = trim((string) $company->odoo_import_company_name);
-        if (in_array(($export['key'] ?? ''), ['customers', 'customer_price_lists', 'prospects', 'prospect_contacts'], true)
-            && (int) $company->odoo_import_company_id > 0
-            && $importCompanyName !== '') {
-            if (($export['key'] ?? '') === 'customer_price_lists') {
-                $export['extra']['company_id'] = $importCompanyName;
-                $export['fields']['company_id'] = 'Company';
-            } else {
-                $xmlid = $this->externalId($company, 'res.company', (int) $company->odoo_import_company_id, 'company_'.$company->odoo_import_company_id);
-                $export['extra']['company_id/id'] = $xmlid;
-                $export['fields']['company_id/id'] = 'Company / External ID';
-            }
+        if ($this->merge()->stamps((string) ($export['key'] ?? '')) && ! in_array((string) ($export['key'] ?? ''), ['warehouses', 'stock_locations'], true)) {
+            $export['fields']['company_id'] = 'Company';
         }
 
         $key = (string) ($export['key'] ?? '');
@@ -66,21 +56,12 @@ class ExportCatalog
             $export['fields']['warehouse_id'] = 'Warehouse';
         }
 
-        if (! in_array($key, ['stock_locations', 'warehouses'], true)) {
-            $export = $this->matchImportedCategories($company, $this->bindItemUserFields($company, $export));
-            if ($key === 'inventory_on_hand') {
-                $this->ensureInventoryVariantIds($company);
-            }
-
-            return $export;
+        $export = $this->matchImportedCategories($company, $this->bindItemUserFields($company, $export));
+        if ($key === 'inventory_on_hand') {
+            $this->ensureInventoryVariantIds($company);
         }
 
-        $parent = $this->warehouseStock($company);
-        $export['extra'] = [
-            'company_id/id' => $this->externalId($company, 'res.company', $parent['company_id'], 'company_'.$parent['company_id']),
-        ];
-
-        return $this->matchImportedCategories($company, $this->bindItemUserFields($company, $export));
+        return $export;
     }
 
     public function matchImportedCategories(Company $company, array $export): array
@@ -327,6 +308,99 @@ class ExportCatalog
         return $rows;
     }
 
+    public function withoutMissingUserColumns($connection, array $export): array
+    {
+        $sql = (string) ($export['sql'] ?? '');
+        if (! str_contains($sql, 'u.[')) {
+            return $export;
+        }
+
+        $table = str_contains($sql, 'spxItemMaster') ? 'spxItemMaster' : 'spxCustomer';
+        $present = [];
+        foreach (app(GpConnection::class)->rows($connection, "SELECT name FROM sys.columns WHERE object_id = OBJECT_ID('dbo.{$table}')") as $row) {
+            $name = strtolower(trim((string) ($row['name'] ?? '')));
+            if ($name !== '') {
+                $present[$name] = true;
+            }
+        }
+        $export['sql'] = preg_replace_callback(
+            '/u\.\[([^\]]+)\]/',
+            function (array $match) use ($present): string {
+                $name = strtolower(trim($match[1]));
+
+                return isset($present[$name]) ? $match[0] : 'NULL';
+            },
+            $sql
+        ) ?? $sql;
+
+        return $export;
+    }
+
+    /**
+     * @param  list<string>  $prospectColumns
+     * @param  list<string>  $contactColumns
+     */
+    public function prospectSql(string $sql, array $prospectColumns, array $contactColumns): string
+    {
+        $prospect = [];
+        foreach ($prospectColumns as $name) {
+            $prospect[strtolower(trim($name))] = true;
+        }
+        $contact = [];
+        foreach ($contactColumns as $name) {
+            $contact[strtolower(trim($name))] = true;
+        }
+        if (! isset($prospect['xlast_contacted'])) {
+            $sql = str_replace("p.xLast_Contacted >= '2026-01-01' AND ", '', $sql);
+            $sql = str_replace('p.xLast_Contacted', 'CAST(NULL AS datetime)', $sql);
+        }
+        if (! isset($prospect['xclass']) && isset($prospect['prospect_class'])) {
+            $sql = str_replace('p.xClass', 'p.Prospect_Class', $sql);
+        } elseif (! isset($prospect['xclass'])) {
+            $sql = str_replace('p.xClass', "CAST('' AS varchar(50))", $sql);
+        }
+        foreach (['xSubClass', 'xPrice_Level'] as $column) {
+            if (! isset($prospect[strtolower($column)])) {
+                $sql = str_replace('p.'.$column, "CAST('' AS varchar(50))", $sql);
+            }
+        }
+        if (! isset($contact['xtitle'])) {
+            foreach (['ct.xTitle', 'other.xTitle', 'c.xTitle'] as $column) {
+                $sql = str_replace($column, "CAST('' AS varchar(50))", $sql);
+            }
+        }
+
+        return $sql;
+    }
+
+    public function withoutMissingProspectColumns($connection, array $export): array
+    {
+        $key = (string) ($export['key'] ?? '');
+        if (! str_starts_with($key, 'prospect')) {
+            return $export;
+        }
+        $names = function (string $table) use ($connection): array {
+            $columns = [];
+            foreach (app(GpConnection::class)->rows($connection, "SELECT name FROM sys.columns WHERE object_id = OBJECT_ID('dbo.{$table}')") as $row) {
+                $name = trim((string) ($row['name'] ?? ''));
+                if ($name !== '') {
+                    $columns[] = $name;
+                }
+            }
+
+            return $columns;
+        };
+        $sql = $this->prospectSql((string) ($export['sql'] ?? ''), $names('spvProspect'), $names('spvProspectContact'));
+        $export['sql'] = $sql;
+        foreach (['count_sql', 'problem_sql'] as $field) {
+            if (! empty($export[$field]) && is_string($export[$field])) {
+                $export[$field] = $this->prospectSql($export[$field], $names('spvProspect'), $names('spvProspectContact'));
+            }
+        }
+
+        return $export;
+    }
+
     public function externalIds($connection, array $export, int $limit = 5): array
     {
         $this->boot();
@@ -430,6 +504,16 @@ class ExportCatalog
             }
         }
         sqlsrv_free_stmt($statement);
+        if ($model === 'res.partner' && $names !== []) {
+            $this->merge()->load($company);
+            $source = $this->sourceFromConnection($connection);
+            $translated = [];
+            foreach ($names as $name) {
+                $canonical = $this->merge()->canonicalPartnerExternal($source, $name);
+                $translated[$canonical] = $canonical;
+            }
+            $names = $translated;
+        }
 
         $map = [];
         foreach (array_chunk(array_values($names), 300) as $chunk) {
@@ -478,8 +562,9 @@ WHERE src.[partner_id/id] LIKE '__import__.partner[_]%'");
         }
 
         $found = [];
+        $source = $this->sourceFromConnection($connection);
         foreach (array_chunk(array_values($numbers), 300) as $chunk) {
-            $names = array_map(static fn (string $number) => 'partner_'.$number, $chunk);
+            $names = array_map(fn (string $number) => $this->merge()->canonicalPartnerExternal($source, 'partner_'.$number), $chunk);
             foreach ($this->odoo->findExternalIds($company, ['res.partner'], $names) as $name => $row) {
                 $found[(string) $name] = true;
             }
@@ -494,7 +579,8 @@ WHERE src.[partner_id/id] LIKE '__import__.partner[_]%'");
 
         $missing = [];
         foreach ($numbers as $number) {
-            if (! isset($found['partner_'.$number]) && ! isset($found['__import__.partner_'.$number])) {
+            $canonical = $this->merge()->canonicalPartnerExternal($source, 'partner_'.$number);
+            if (! isset($found[$canonical]) && ! isset($found['__import__.'.$canonical])) {
                 $missing[] = $number;
             }
         }
@@ -1295,6 +1381,18 @@ SQL);
         }
 
         return array_values(array_unique($tokens));
+    }
+
+    private function merge(): CompanyMerge
+    {
+        return $this->merge ??= app(CompanyMerge::class);
+    }
+
+    private function sourceFromConnection($connection): array
+    {
+        $rows = app(GpConnection::class)->rows($connection, 'SELECT DB_NAME() AS name', 1);
+
+        return $this->merge()->sourceForDatabase(trim((string) ($rows[0]['name'] ?? '')));
     }
 
     private function externalId(Company $company, string $model, int $resId, string $name): string

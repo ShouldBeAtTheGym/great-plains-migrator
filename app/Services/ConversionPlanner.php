@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Models\Company;
 use App\Models\ConversionStep;
+use App\Models\GpCopy;
+use App\Models\GpCopyRow;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
@@ -32,18 +34,42 @@ class ConversionPlanner
     public function counts(Company $company): array
     {
         return Cache::remember('gp-counts-'.$company->id, 120, function () use ($company) {
-            $connection = $this->gp->connect($company);
             $counts = [];
-            foreach ($this->catalog->all() as $export) {
+            foreach (app(CompanyMerge::class)->sources() as $source) {
                 try {
-                    $export = $this->catalog->bindItemUserFields($company, $export, $connection);
-                    $rows = $this->gp->rows($connection, $export['count_sql'], 1);
-                    $counts[$export['key']] = isset($rows[0]['c']) ? (int) $rows[0]['c'] : null;
+                    $connection = $this->gp->connectDatabase($company, $source['database']);
                 } catch (RuntimeException) {
-                    $counts[$export['key']] = null;
+                    continue;
+                }
+                try {
+                    foreach ($this->catalog->all() as $export) {
+                        try {
+                            $export = $this->catalog->bindItemUserFields($company, $export, $connection);
+                            $rows = $this->gp->rows($connection, $export['count_sql'], 1);
+                            if (! isset($rows[0]['c'])) {
+                                continue;
+                            }
+                            $counts[$export['key']] = ($counts[$export['key']] ?? 0) + (int) $rows[0]['c'];
+                        } catch (RuntimeException) {
+                            if (! array_key_exists($export['key'], $counts)) {
+                                $counts[$export['key']] = null;
+                            }
+                        }
+                    }
+                } finally {
+                    if (is_resource($connection)) {
+                        sqlsrv_close($connection);
+                    }
                 }
             }
-            sqlsrv_close($connection);
+
+            $merge = app(CompanyMerge::class);
+            $merge->load($company);
+            foreach ($merge->keptCounts() as $key => $count) {
+                if ($count > 0) {
+                    $counts[$key] = $count;
+                }
+            }
 
             return $counts;
         });
@@ -228,7 +254,10 @@ class ConversionPlanner
             }
 
             $large = $this->uploads->isLarge($gpCount);
-            $ids = $large ? [] : $this->catalog->externalIds($connection, $export, min(5, $gpCount));
+            $ids = $large ? [] : $this->copiedExternalIds($company, (string) $export['key'], min(5, $gpCount));
+            if ($ids === [] && ! $large) {
+                $ids = $this->catalog->externalIds($connection, $export, min(5, $gpCount));
+            }
         } finally {
             sqlsrv_close($connection);
         }
@@ -379,6 +408,44 @@ class ConversionPlanner
             'passed' => $passed,
             'checks' => $checks,
         ];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function copiedExternalIds(Company $company, string $key, int $limit): array
+    {
+        if ($limit < 1) {
+            return [];
+        }
+
+        $copy = GpCopy::query()
+            ->where('company_id', $company->id)
+            ->where('export_key', $key)
+            ->where('status', 'complete')
+            ->first();
+        $columns = is_array($copy?->columns) ? array_values($copy->columns) : [];
+        $index = array_search('id', $columns, true);
+        if ($index === false) {
+            return [];
+        }
+
+        $ids = [];
+        $rows = GpCopyRow::query()
+            ->where('company_id', $company->id)
+            ->where('export_key', $key)
+            ->orderBy('row_no')
+            ->limit($limit)
+            ->get();
+        foreach ($rows as $row) {
+            $line = json_decode((string) $row->payload, true);
+            $id = trim((string) (is_array($line) ? ($line[$index] ?? '') : ''));
+            if ($id !== '') {
+                $ids[] = $id;
+            }
+        }
+
+        return $ids;
     }
 
     public function models(string $key): array

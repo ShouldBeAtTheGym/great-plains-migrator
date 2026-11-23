@@ -29,6 +29,7 @@ class SalespersonLinkTest extends TestCase
 
         $this->mock(GpConnection::class, function ($mock) {
             $mock->shouldReceive('connect')->andReturn(null);
+            $mock->shouldReceive('connectDatabase')->andReturn(null);
             $mock->shouldReceive('rows')->andReturn([
                 ['id' => '205', 'first_name' => 'ALT', 'last_name' => 'TRACIE', 'email' => 'corinne@example.com', 'inactive' => 0, 'orders' => 7],
                 ['id' => '206', 'first_name' => 'HOUSE', 'last_name' => 'ACCOUNT', 'email' => '', 'inactive' => 0, 'orders' => 1],

@@ -30,17 +30,45 @@ class GreatPlainsTab
 
     public function choices(Company $company): array
     {
-        $connection = $this->gp->connect($company);
-        try {
-            $choices = [];
-            foreach (self::FIELDS as $key => $field) {
-                $choices[$key] = $this->distinct($connection, $field['table'], $field['column'], $field['fallback']);
-            }
-
-            return $choices;
-        } finally {
-            sqlsrv_close($connection);
+        $choices = [];
+        foreach (array_keys(self::FIELDS) as $key) {
+            $choices[$key] = [];
         }
+        foreach (app(CompanyMerge::class)->sources() as $source) {
+            try {
+                $connection = $this->gp->connectDatabase($company, $source['database']);
+            } catch (RuntimeException) {
+                continue;
+            }
+            try {
+                foreach (self::FIELDS as $key => $field) {
+                    $choices[$key] = $this->values(array_map(
+                        static fn (string $value) => ['value' => $value],
+                        array_merge($choices[$key], $this->distinct($connection, $field['table'], $field['column'], $field['fallback']), $this->usedValues($connection, $field['column']))
+                    ));
+                }
+            } finally {
+                if (is_resource($connection)) {
+                    sqlsrv_close($connection);
+                }
+            }
+        }
+
+        return $choices;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function usedValues($connection, string $column): array
+    {
+        try {
+            $rows = $this->gp->rows($connection, 'SELECT DISTINCT LTRIM(RTRIM('.$column.')) AS value FROM dbo.spvCustomer WHERE NULLIF(LTRIM(RTRIM('.$column.')), \'\') IS NOT NULL');
+        } catch (RuntimeException) {
+            return [];
+        }
+
+        return $this->values($rows);
     }
 
     public function distinct($connection, string $table, string $column, string $fallback): array
@@ -69,6 +97,20 @@ class GreatPlainsTab
         sort($list, SORT_NATURAL | SORT_FLAG_CASE);
 
         return $list;
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    public function publishChoices(Company $company): array
+    {
+        $added = [];
+        foreach ($this->choices($company) as $key => $options) {
+            $field = self::FIELDS[$key];
+            $added[$field['label']] = $this->odoo->addSelectionValues($company, 'res.partner', $field['name'], $options);
+        }
+
+        return $added;
     }
 
     public function create(Company $company, array $choices): string
